@@ -31,6 +31,7 @@ class AudioStreamSession:
     processed_file_buffer: bytearray = field(default_factory=bytearray)
     processed_duration_sec: float = 0.0
     bgm_info: dict = field(default_factory=dict)
+    glossary: dict = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_active = time.time()

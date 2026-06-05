@@ -11,6 +11,8 @@ from typing import Any
 import httpx
 from django.conf import settings
 
+from .glossary import format_glossary_prompt, merge_glossary, load_default_glossary
+
 logger = logging.getLogger(__name__)
 
 LANG_LABELS = {
@@ -111,6 +113,7 @@ def translate_with_correction(
     source_text: str,
     history: list[dict],
     source_lang: str = "auto",
+    glossary: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """
     翻译当前片段，并可能对历史字幕纠错。
@@ -131,6 +134,10 @@ def translate_with_correction(
     history_text, _ = _build_history_context(history)
     lang_hint = LANG_LABELS.get(source_lang, source_lang)
 
+    terms = merge_glossary(load_default_glossary(), glossary or {})
+    glossary_block = format_glossary_prompt(terms)
+    glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
+
     user_content = f"""源语言：{lang_hint}
 
 历史字幕（index 为全局行号）：
@@ -139,7 +146,7 @@ def translate_with_correction(
 当前新识别原文：
 {source_text}
 
-请翻译当前原文，并检查历史是否需要纠错。"""
+请翻译当前原文，并检查历史是否需要纠错。{glossary_section}"""
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

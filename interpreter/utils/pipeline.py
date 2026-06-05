@@ -37,7 +37,12 @@ def _run_asr(segment: bytes, sample_rate: int, language: Optional[str]) -> dict:
         return {"text": "", "error": str(e), "circuit_open": breaker.is_open()}
 
 
-def _run_translate(source_text: str, history: list, source_lang: str) -> dict:
+def _run_translate(
+    source_text: str,
+    history: list,
+    source_lang: str,
+    glossary: dict | None = None,
+) -> dict:
     breaker = get_llm_breaker()
     if breaker.is_open():
         return {
@@ -48,7 +53,10 @@ def _run_translate(source_text: str, history: list, source_lang: str) -> dict:
         }
     try:
         result = translate_with_correction(
-            source_text, history, source_lang=source_lang
+            source_text,
+            history,
+            source_lang=source_lang,
+            glossary=glossary,
         )
         if result.get("error"):
             breaker.record_failure()
@@ -76,6 +84,7 @@ def process_audio_segment(
     segment_start_sec: float = 0.0,
     segment_duration_sec: float | None = None,
     bgm_info: dict | None = None,
+    glossary: dict | None = None,
 ) -> dict[str, Any]:
     """
     处理一段 PCM 音频，返回 ASR + 翻译 + 纠错 + 延迟指标。
@@ -104,7 +113,7 @@ def process_audio_segment(
             )
             return result
 
-        tr = _run_translate(source_text, history, source_lang)
+        tr = _run_translate(source_text, history, source_lang, glossary)
         result["translation"] = tr.get("translation", "")
         result["corrections"] = tr.get("corrections", [])
         result["fallback"] = tr.get("fallback", False)
