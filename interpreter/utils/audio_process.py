@@ -2,6 +2,7 @@
 音频预处理：Spleeter 人声/BGM 分离 + noisereduce 环境降噪。
 
 Spleeter 为可选依赖（见 requirements-spleeter.txt），未安装时自动降级为快速分离链路。
+与 video_extract 提取的纯人声音轨配合，送入流式 ASR 识别。
 """
 from __future__ import annotations
 
