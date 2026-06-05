@@ -13,6 +13,7 @@ from django.conf import settings
 from .asr import transcribe_stream_chunk
 from .circuit_breaker import get_asr_breaker, get_llm_breaker
 from .quality import compute_segment_quality
+from .speaker import SpeakerTracker
 from .translate import apply_corrections_to_history, translate_with_correction
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ def process_audio_segment(
     segment_duration_sec: float | None = None,
     bgm_info: dict | None = None,
     glossary: dict | None = None,
+    speaker_tracker: SpeakerTracker | None = None,
 ) -> dict[str, Any]:
     """
     处理一段 PCM 音频，返回 ASR + 翻译 + 纠错 + 延迟指标。
@@ -124,12 +126,19 @@ def process_audio_segment(
             segment_duration_sec = len(segment) / (sample_rate * 2)
         end_sec = segment_start_sec + segment_duration_sec
 
+        speaker = None
+        if speaker_tracker:
+            speaker = speaker_tracker.assign(
+                segment, segment_start_sec, end_sec
+            )
+
         result["subtitle"] = {
             "source": source_text,
             "target": result["translation"],
             "is_partial": asr.get("is_partial", False),
             "start_sec": round(segment_start_sec, 3),
             "end_sec": round(end_sec, 3),
+            "speaker": speaker,
         }
         history.append(
             {
@@ -137,6 +146,7 @@ def process_audio_segment(
                 "target": result["translation"],
                 "start_sec": round(segment_start_sec, 3),
                 "end_sec": round(end_sec, 3),
+                "speaker": speaker,
             }
         )
         result["history"] = [
@@ -147,6 +157,7 @@ def process_audio_segment(
                 "corrected": h.get("corrected", False),
                 "start_sec": h.get("start_sec"),
                 "end_sec": h.get("end_sec"),
+                "speaker": h.get("speaker"),
             }
             for i, h in enumerate(history)
         ]

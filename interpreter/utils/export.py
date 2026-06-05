@@ -28,9 +28,12 @@ def subtitles_to_srt(items: list[dict], default_duration: float = 3.0) -> str:
         end = float(item.get("end_sec") or start + default_duration)
         if end <= start:
             end = start + default_duration
-        text = target or source
+        speaker = (item.get("speaker") or "").strip()
+        prefix = f"[发言人 {speaker}] " if speaker else ""
         if source and target and source != target:
-            text = f"{target}\n({source})"
+            text = f"{prefix}{target}\n({source})"
+        else:
+            text = prefix + (target or source)
         lines.append(str(i))
         lines.append(f"{_format_srt_time(start)} --> {_format_srt_time(end)}")
         lines.append(text)
