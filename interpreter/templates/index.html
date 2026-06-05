@@ -124,17 +124,48 @@
       gap: 0.5rem;
       flex-wrap: wrap;
     }
+    .input-tabs {
+      display: flex; gap: 0.5rem; margin-bottom: 0.85rem;
+    }
+    .tab-btn {
+      flex: 1; padding: 0.65rem; border-radius: 8px;
+      background: var(--card); border: 1px solid var(--border);
+      color: var(--muted); cursor: pointer; font-weight: 500;
+    }
+    .tab-btn.active {
+      background: var(--accent); color: #fff; border-color: var(--accent);
+    }
+    .input-panel { display: none; flex-wrap: wrap; gap: 0.6rem; margin-bottom: 1rem; }
+    .input-panel.active { display: flex; }
+    .video-preview-wrap {
+      width: 100%; background: #000; border-radius: 10px;
+      border: 1px solid var(--border); overflow: hidden; max-height: 220px;
+    }
+    .video-preview-wrap video { width: 100%; max-height: 220px; display: block; }
+    .progress-wrap {
+      width: 100%; height: 6px; background: var(--card2);
+      border-radius: 99px; overflow: hidden; display: none;
+    }
+    .progress-wrap.show { display: block; }
+    .progress-bar {
+      height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width 0.15s ease;
+    }
     .subtitle-list {
       flex: 1;
       overflow-y: auto;
       padding: 0.85rem 1rem;
       scroll-behavior: smooth;
+      text-align: center;
     }
     .subtitle-item {
-      margin-bottom: 0.85rem;
-      padding: 0.7rem 0.9rem;
-      border-radius: 8px;
-      background: rgba(255,255,255,0.03);
+      margin: 0 auto 0.85rem;
+      max-width: 92%;
+      padding: 0.85rem 1.1rem;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.55);
+      border: 1px solid rgba(255,255,255,0.08);
+      backdrop-filter: blur(6px);
       border-left: 3px solid var(--accent);
     }
     .subtitle-item.partial { opacity: 0.72; border-left-color: var(--muted); }
@@ -143,8 +174,8 @@
       background: rgba(245, 158, 11, 0.08);
     }
     .subtitle-item .source { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
-    .subtitle-item .target { font-size: 1rem; font-weight: 500; color: #f0f6ff; }
-    .subtitle-item.bilingual .target { font-size: 1.08rem; font-weight: 600; }
+    .subtitle-item .target { font-size: 1.15rem; font-weight: 600; color: #f0f6ff; }
+    .subtitle-item.bilingual .target { font-size: 1.25rem; font-weight: 700; }
     .subtitle-item.bilingual .source {
       margin-top: 0.4rem; padding-top: 0.4rem;
       border-top: 1px dashed var(--border);
@@ -192,13 +223,32 @@
   </header>
 
   <main>
-    <div class="controls">
+    <div class="input-tabs">
+      <button type="button" class="tab-btn active" data-tab="mic">🎤 麦克风收音</button>
+      <button type="button" class="tab-btn" data-tab="video">🎬 本地视频</button>
+    </div>
+
+    <div id="panelMic" class="input-panel active controls">
       <button id="btnMic" class="btn-primary">开始麦克风同传</button>
       <button id="btnStop" class="btn-danger" disabled>停止</button>
-      <label class="file-label">
-        上传音视频文件
-        <input type="file" id="fileInput" accept="audio/*,video/*" />
+    </div>
+
+    <div id="panelVideo" class="input-panel controls">
+      <label class="file-label btn-primary" style="border:none;background:var(--accent);color:#fff">
+        选择视频 MP4/MOV/AVI
+        <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/x-msvideo,video/*,audio/*" />
       </label>
+      <button id="btnVideoStart" class="btn-primary" disabled>开始视频同传</button>
+      <button id="btnVideoStop" class="btn-danger" disabled>停止</button>
+      <div class="video-preview-wrap" id="videoPreviewWrap" hidden>
+        <video id="videoPreview" controls playsinline></video>
+      </div>
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+    </div>
+
+    <div class="controls" style="margin-top:0">
       <select id="sourceLang" class="lang-select" title="源语言">
         <option value="auto">源语言：自动</option>
         <option value="en">英语 → 中文</option>
@@ -255,10 +305,20 @@
     let mediaRecorder = null;
     let micStream = null;
     let pendingRequests = 0;
+    let selectedVideoFile = null;
+    let inputMode = "mic";
 
     const el = {
       btnMic: document.getElementById("btnMic"),
       btnStop: document.getElementById("btnStop"),
+      btnVideoStart: document.getElementById("btnVideoStart"),
+      btnVideoStop: document.getElementById("btnVideoStop"),
+      videoPreview: document.getElementById("videoPreview"),
+      videoPreviewWrap: document.getElementById("videoPreviewWrap"),
+      progressWrap: document.getElementById("progressWrap"),
+      progressBar: document.getElementById("progressBar"),
+      panelMic: document.getElementById("panelMic"),
+      panelVideo: document.getElementById("panelVideo"),
       btnClear: document.getElementById("btnClear"),
       btnExportSrt: document.getElementById("btnExportSrt"),
       chkBgm: document.getElementById("chkBgm"),
@@ -423,9 +483,53 @@
       return res.json();
     }
 
+    function syncHistoryFromServer(history) {
+      if (!history?.length) return;
+      subtitles.length = 0;
+      history.forEach((h) => {
+        subtitles.push({
+          source: h.source || "",
+          target: h.target || "",
+          partial: false,
+          corrected: !!h.corrected,
+          start_sec: h.start_sec,
+          end_sec: h.end_sec,
+        });
+      });
+      renderSubtitles();
+    }
+
+    function setProgress(pct) {
+      el.progressWrap.classList.toggle("show", pct > 0 && pct < 100);
+      el.progressBar.style.width = pct + "%";
+      if (pct >= 100) setTimeout(() => el.progressWrap.classList.remove("show"), 600);
+    }
+
+    function uploadWithProgress(url, formData) {
+      return new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", url);
+        xhr.setRequestHeader("X-Session-Id", sessionId);
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
+        };
+        xhr.onload = () => {
+          setProgress(100);
+          try {
+            const data = JSON.parse(xhr.responseText);
+            if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+            else reject(new Error(data.error || "upload failed"));
+          } catch (err) { reject(err); }
+        };
+        xhr.onerror = () => reject(new Error("network error"));
+        xhr.send(formData);
+      });
+    }
+
     async function handleResponse(data) {
       if (data.bgm) setBgmInfo(data.bgm);
       if (data.corrections?.length) applyCorrections(data.corrections);
+      if (data.history?.length) syncHistoryFromServer(data.history);
       if (data.subtitle) {
         const { source, target, is_partial, start_sec, end_sec } = data.subtitle;
         addSubtitle(source, target, is_partial, { start_sec, end_sec });
@@ -462,20 +566,19 @@
       fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
       fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
       fd.append("separation_method", "auto");
-      const res = await fetch(API_VIDEO_INGEST, {
-        method: "POST",
-        headers: { "X-Session-Id": sessionId },
-        body: fd,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "ingest failed");
+      setProgress(1);
+      const data = await uploadWithProgress(API_VIDEO_INGEST, fd);
       if (data.session_id) {
         sessionId = data.session_id;
         localStorage.setItem("interpreter_session", sessionId);
+        el.sessionLabel.textContent = "会话 " + sessionId.slice(0, 8);
       }
       if (data.qiniu?.url) {
         el.qiniuLink.hidden = false;
         el.qiniuLink.innerHTML = '云端文件：<a href="' + data.qiniu.url + '" target="_blank" rel="noopener">' + data.qiniu.url + '</a>';
+      }
+      if (data.video) {
+        setStatus(`音频已提取 · ${data.video.duration_sec}s · ${data.video.format.toUpperCase()}`, "live");
       }
       setBgmInfo(data.bgm);
       return data;
@@ -527,9 +630,29 @@
       setStatus("已停止");
     }
 
+    async function processVideoFile(file) {
+      el.btnVideoStart.disabled = true;
+      el.btnVideoStop.disabled = false;
+      try {
+        setStatus("上传并提取音轨: " + file.name, "live");
+        await ingestMediaFile(file);
+        setStatus("流式同传识别中…", "live");
+        await streamProcessedFile();
+        setStatus("视频同传完成" + (el.chkBgm.checked ? "（BGM已分离）" : ""));
+      } catch (e) {
+        setStatus("视频处理失败: " + e.message, "error");
+      } finally {
+        el.btnVideoStart.disabled = !selectedVideoFile;
+        el.btnVideoStop.disabled = true;
+      }
+    }
+
     async function processFile(file) {
+      if (inputMode === "video" || isVideoFile(file)) {
+        return processVideoFile(file);
+      }
       el.btnMic.disabled = true;
-      const useServer = isVideoFile(file) || el.chkBgm.checked;
+      const useServer = el.chkBgm.checked;
 
       try {
         if (useServer) {
@@ -576,11 +699,39 @@
       }
     }
 
+    document.querySelectorAll(".tab-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        inputMode = btn.dataset.tab;
+        document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        el.panelMic.classList.toggle("active", inputMode === "mic");
+        el.panelVideo.classList.toggle("active", inputMode === "video");
+        if (inputMode === "mic") stopMic();
+      });
+    });
+
     el.btnMic.addEventListener("click", startMic);
     el.btnStop.addEventListener("click", stopMic);
+    el.btnVideoStart.addEventListener("click", () => {
+      if (selectedVideoFile) processVideoFile(selectedVideoFile);
+    });
+    el.btnVideoStop.addEventListener("click", () => {
+      el.btnVideoStart.disabled = !selectedVideoFile;
+      el.btnVideoStop.disabled = true;
+      setStatus("已停止");
+    });
     el.fileInput.addEventListener("change", (e) => {
       const f = e.target.files[0];
-      if (f) processFile(f);
+      if (!f) return;
+      selectedVideoFile = f;
+      el.btnVideoStart.disabled = false;
+      if (isVideoFile(f)) {
+        const url = URL.createObjectURL(f);
+        el.videoPreview.src = url;
+        el.videoPreviewWrap.hidden = false;
+      } else {
+        el.videoPreviewWrap.hidden = true;
+      }
+      setStatus("已选择: " + f.name + "，点击「开始视频同传」");
       e.target.value = "";
     });
     el.btnClear.addEventListener("click", async () => {
