@@ -13,6 +13,7 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
+from .utils.audio_process import is_spleeter_available
 from .utils.bgm import is_video_file, prepare_media_for_interpretation
 from .utils.circuit_breaker import get_asr_breaker, get_llm_breaker
 from .utils.export import subtitles_to_srt, subtitles_to_txt
@@ -137,20 +138,24 @@ def api_audio_chunk(request):
     fmt = (request.POST.get("format") or "webm").lower()
     sample_rate = int(request.POST.get("sample_rate") or 16000)
     separate_bgm = request.POST.get("separate_bgm") == "1"
+    denoise = request.POST.get("denoise", "1") == "1"
 
     try:
         pcm, sample_rate = _decode_audio(raw, fmt, sample_rate)
-        if separate_bgm and len(pcm) > 3200:
+        if (separate_bgm or denoise) and len(pcm) > 3200:
             from pydub import AudioSegment
 
-            from .utils.bgm import separate_vocals
+            from .utils.audio_process import separate_vocals
 
             seg = AudioSegment(
                 pcm, sample_width=2, frame_rate=sample_rate, channels=1
             )
-            enhanced = separate_vocals(seg)
+            method = request.POST.get("separation_method", "fast")
+            vocal, _ = separate_vocals(
+                seg, method=method, denoise=denoise, denoise_strength=0.5
+            )
             pcm = (
-                enhanced.set_frame_rate(16000)
+                vocal.set_frame_rate(16000)
                 .set_channels(1)
                 .set_sample_width(2)
                 .raw_data
@@ -189,12 +194,18 @@ def api_video_ingest(request):
     raw = media_file.read()
     name = media_file.name or "upload.mp4"
     separate_bgm = request.POST.get("separate_bgm", "1") == "1"
+    denoise = request.POST.get("denoise", "1") == "1"
+    separation_method = request.POST.get("separation_method", "auto")
     if is_video_file(name):
         separate_bgm = request.POST.get("separate_bgm", "1") != "0"
 
     try:
         pcm, sample_rate, bgm_info = prepare_media_for_interpretation(
-            raw, name, separate_bgm=separate_bgm
+            raw,
+            name,
+            separate_bgm=separate_bgm,
+            denoise=denoise,
+            separation_method=separation_method,
         )
         session.load_processed_file(pcm, sample_rate, bgm_info)
     except Exception as e:
@@ -326,6 +337,7 @@ def api_health(request):
             "qiniu_configured": is_qiniu_configured(),
             "chunk_duration_ms": int(settings.AUDIO_CHUNK_DURATION_SEC * 1000),
             "bgm_separation": True,
+            "spleeter_available": is_spleeter_available(),
             "circuit": {
                 "asr": get_asr_breaker().status(),
                 "llm": get_llm_breaker().status(),

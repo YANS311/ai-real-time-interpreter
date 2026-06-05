@@ -1,0 +1,7 @@
+# 可选：Spleeter 人声/BGM 分离（较重，建议单独安装）
+# pip install -r requirements-spleeter.txt
+#
+# 需已安装 ffmpeg；首次运行会自动下载模型（约 80MB）
+-r requirements.txt
+spleeter>=2.4.0
+tensorflow>=2.12.0,<2.16.0
