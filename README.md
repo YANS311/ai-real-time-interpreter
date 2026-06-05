@@ -9,15 +9,25 @@
 | 功能 | 状态 |
 |------|------|
 | 麦克风实时收音同传 | ✅ |
-| 本地音视频文件上传同传 | ✅ |
-| 流式 Whisper ASR（300ms 分片） | ✅ |
-| 大模型实时中文字幕 + AI 纠错 | ✅ |
+| 本地音视频文件上传同传（MP4/MOV/AVI） | ✅ |
+| 流式 Whisper ASR（300ms 低延迟分片） | ✅ |
+| 大模型实时中文字幕 + AI 上下文纠错 | ✅ |
 | Edge-TTS 中文语音播报 | ✅ |
 | 视频 BGM 检测 + 人声分离（Spleeter 可选） | ✅ |
 | 环境降噪（noisereduce） | ✅ |
-| 双语字幕 / SRT 导出 | ✅ |
-| 七牛云 Kodo 云端存储 | ✅（需配置） |
+| 双语字幕 / SRT / TXT / ZIP 导出 | ✅ |
+| 同传历史记录保存与回看 | ✅ |
+| 识别质量评分（质量分 / 信噪比 / 延迟） | ✅ |
+| 一键演示模式（答辩样例字幕） | ✅ |
+| 演讲模式（全屏悬浮大字幕） | ✅ |
+| 术语表 / 热词优先翻译 | ✅ |
+| 轻量说话人分段（发言人 A/B） | ✅ |
+| 字幕样式自定义（字号 / 颜色 / 位置） | ✅ |
+| 视频同传暂停 / 进度条 / 跳转 | ✅ |
+| 系统状态监控页 `/status` | ✅ |
 | 低延迟 / 高准确率双模式 | ✅ |
+| 七牛云 Kodo 云端存储 | ✅（可选，需配置） |
+| Docker Compose 一键部署 | ✅ |
 
 ## 技术栈
 
@@ -30,6 +40,52 @@
 | pydub + **ffmpeg** | 音视频解码（**三平台必装**） |
 | Spleeter（可选） | 高质量人声/BGM 分离 |
 | 七牛 SDK | 对象存储（可选） |
+
+---
+
+## 架构概览
+
+```mermaid
+flowchart LR
+  subgraph input [输入]
+    Mic[麦克风]
+    Video[视频/音频文件]
+    Demo[一键演示]
+  end
+  subgraph preprocess [预处理]
+    BGM[BGM分离/降噪]
+    Chunk[300ms流式分片]
+  end
+  subgraph core [核心管线]
+    ASR[Whisper ASR]
+    LLM[大模型翻译+纠错]
+    Speaker[说话人A/B]
+  end
+  subgraph output [输出]
+    UI[实时字幕面板]
+    Present[演讲模式]
+    Export[SRT/TXT/ZIP]
+    TTS[Edge-TTS播报]
+  end
+  Mic --> Chunk
+  Video --> BGM --> Chunk
+  Demo --> UI
+  Chunk --> ASR --> LLM --> Speaker --> UI
+  LLM --> Present
+  LLM --> Export
+  LLM --> TTS
+```
+
+---
+
+## Docker 一键启动（可选）
+
+```bash
+cp .env.example .env   # 填入 LLM_API_KEY
+docker compose up --build
+```
+
+浏览器访问 <http://127.0.0.1:8000/>。容器内已内置 **ffmpeg**，无需本机单独安装。
 
 ---
 
@@ -266,14 +322,25 @@ python manage.py runserver
 
 ---
 
-## Demo 演示流程
+## Demo 演示流程（约 1 分钟 · 答辩推荐）
 
-1. **麦克风同传**：点击「开始麦克风同传」，说英文/日文，观察延迟与中文字幕
-2. **视频 + BGM**：上传 `.mp4`，勾选「BGM 人声分离」「环境降噪」，观察 BGM 状态
-3. **双语字幕**：勾选「双语字幕」，中文在上、原文在下
-4. **模式切换**：直播场景用「低延迟」；录播视频用「高准确率」
-5. **纠错**：故意模糊发音，观察「已纠错」标记
-6. **导出**：点击「导出 SRT」，导入剪映 / PR
+> 无需麦克风时：直接点 **「一键演示」** + **「演讲模式」** 投屏，稳定不翻车。
+
+1. **一键演示**：点「一键演示」→ 自动播放 6 句双语样例字幕（可开 TTS）
+2. **演讲模式**：点「演讲模式」→ 全屏大字幕，按 `Esc` 退出
+3. **视频 + BGM**（可选）：上传 `.mp4` → 勾选 BGM 分离 → 用 **暂停/进度条** 控制识别节奏
+4. **说话人 A/B**：勾选「说话人标注」，双人对话视频可看到发言人切换
+5. **术语表**：输入 `Whisper=语音识别,GPT=生成式预训练模型` 观察翻译偏好
+6. **质量面板**：顶栏查看质量分、信噪比、均延迟
+7. **导出**：「导出 SRT」或「导出 ZIP」（含 JSON 时间轴）
+8. **系统状态**：打开 [/status/](http://127.0.0.1:8000/status/) 展示监控面板
+
+快速自测脚本：
+
+```bash
+chmod +x scripts/selftest.sh
+./scripts/selftest.sh http://127.0.0.1:8000
+```
 
 ---
 
@@ -282,25 +349,36 @@ python manage.py runserver
 ```
 ai-real-time-interpreter/
 ├── manage.py
+├── Dockerfile / docker-compose.yml
 ├── requirements.txt              # 基础依赖（三平台通用）
 ├── requirements-spleeter.txt     # 可选：Spleeter + TensorFlow
 ├── .env.example
 ├── scripts/create-pr.sh          # 自动创建 PR
+├── scripts/selftest.sh           # 本地快速自测
 ├── .github/workflows/auto-pr.yml
 ├── core/                         # Django 配置
 └── interpreter/
     ├── views.py                  # API 接口
-    ├── templates/index.html      # 前端
+    ├── templates/
+    │   ├── index.html            # 主页面
+    │   └── status.html           # 状态监控页
+    ├── static/demo/              # 演示字幕脚本
     └── utils/
         ├── asr.py                # Whisper 识别
-        ├── translate.py          # 翻译 + 纠错
+        ├── translate.py          # 翻译 + 纠错 + 术语表
+        ├── speaker.py            # 说话人 A/B 分段
         ├── audio_process.py      # Spleeter + 降噪
         ├── bgm.py                # BGM 检测与预处理
         ├── export.py             # SRT/TXT 导出
+        ├── export_bundle.py      # ZIP 打包导出
+        ├── demo.py               # 演示模式
+        ├── glossary.py           # 术语表
+        ├── history_store.py      # 历史记录
+        ├── quality.py            # 质量评分
         ├── tts.py                # Edge-TTS
-        ├── stream.py             # 音频流缓冲
+        ├── stream.py             # 音频流缓冲 + 进度控制
         ├── pipeline.py           # 处理管线
-        └── qiniu_storage.py      # 七牛 Kodo
+        └── qiniu_storage.py      # 七牛 Kodo（可选）
 ```
 
 ---
@@ -310,11 +388,19 @@ ai-real-time-interpreter/
 | 路径 | 方法 | 说明 |
 |------|------|------|
 | `/` | GET | 主页面 |
-| `/api/health/` | GET | 健康检查 |
+| `/status/` | GET | 系统状态监控页 |
+| `/api/health/` | GET | 健康检查（精简） |
+| `/api/status/` | GET | 系统状态 JSON |
 | `/api/audio/chunk/` | POST | 音频分片 / 拉取预处理流 |
 | `/api/video/ingest/` | POST | 视频预处理（BGM 分离） |
-| `/api/upload/` | POST | 上传七牛云 |
-| `/api/export/subtitles/` | GET | 导出 SRT/TXT |
+| `/api/demo/script/` | GET | 演示模式预置字幕 |
+| `/api/session/progress/` | GET | 视频同传播放进度 |
+| `/api/session/control/` | POST | 暂停 / 继续 / 跳转 / 停止 |
+| `/api/history/` | GET | 历史记录列表 |
+| `/api/history/save/` | POST | 保存当前会话 |
+| `/api/upload/` | POST | 上传七牛云（可选） |
+| `/api/export/subtitles/` | GET/POST | 导出 SRT/TXT |
+| `/api/export/bundle/` | GET/POST | 导出 ZIP 字幕包 |
 | `/api/tts/` | POST | 中文 TTS |
 
 ---
