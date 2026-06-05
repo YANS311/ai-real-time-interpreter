@@ -103,6 +103,9 @@ docker compose up --build
 
 快捷键：`D` 样例演示，`P` 演讲模式，视频同传中 `空格` 暂停/继续，`Esc` 退出演讲模式。点击字幕行可复制内容。
 
+<!-- 截图可放在 docs/screenshots/ 并在下方引用 -->
+<!-- ![主界面](docs/screenshots/main.png) -->
+
 ```bash
 chmod +x scripts/selftest.sh
 ./scripts/selftest.sh http://127.0.0.1:8000

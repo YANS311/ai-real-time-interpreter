@@ -6,6 +6,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from datetime import datetime
 
 from django.conf import settings
 from django.http import HttpResponse, JsonResponse
@@ -39,6 +40,11 @@ from .utils.stream import (
     wav_bytes_to_pcm,
 )
 from .utils.tts import synthesize_speech
+
+
+def _export_filename(stem: str, ext: str) -> str:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{stem}_{stamp}.{ext}"
 
 
 def index(request):
@@ -332,7 +338,9 @@ def api_export_bundle(request):
     return HttpResponse(
         data,
         content_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="subtitles_bundle.zip"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{_export_filename("subtitles_bundle", "zip")}"',
+        },
     )
 
 
@@ -361,17 +369,27 @@ def api_export_subtitles(request):
 
     content = export_subtitles(items, fmt)
     if fmt == "txt":
-        return HttpResponse(content, content_type="text/plain; charset=utf-8")
+        return HttpResponse(
+            content,
+            content_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{_export_filename("subtitles", "txt")}"',
+            },
+        )
     if fmt == "vtt":
         return HttpResponse(
             content,
             content_type="text/vtt; charset=utf-8",
-            headers={"Content-Disposition": 'attachment; filename="subtitles.vtt"'},
+            headers={
+                "Content-Disposition": f'attachment; filename="{_export_filename("subtitles", "vtt")}"',
+            },
         )
     return HttpResponse(
         content,
         content_type="application/x-subrip; charset=utf-8",
-        headers={"Content-Disposition": 'attachment; filename="subtitles.srt"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{_export_filename("subtitles", "srt")}"',
+        },
     )
 
 

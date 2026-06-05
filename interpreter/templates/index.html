@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="description" content="实时语音识别与中文字幕同传" />
   <title>AI 同声传译助手</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23151b26'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%233b82f6'%3E译%3C/text%3E%3C/svg%3E" />
   <style>
     :root {
       --bg: #0a0e14;
@@ -1248,7 +1250,7 @@
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "subtitles_bundle.zip";
+      a.download = exportFilename("subtitles_bundle", "zip");
       a.click();
       URL.revokeObjectURL(a.href);
       setStatus("已导出 ZIP（SRT+TXT+JSON）");
@@ -1263,7 +1265,14 @@
       await navigator.clipboard.writeText(text);
       setStatus("已复制全文到剪贴板");
     });
-    async function exportSubtitles(fmt, filename, label) {
+    function exportFilename(stem, ext) {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+      return `${stem}_${stamp}.${ext}`;
+    }
+
+    async function exportSubtitles(fmt, stem, label) {
       if (!subtitles.length) {
         setStatus("暂无字幕可导出", "warn");
         return;
@@ -1283,13 +1292,13 @@
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = filename;
+      a.download = exportFilename(stem, fmt);
       a.click();
       URL.revokeObjectURL(a.href);
       setStatus(label + " 已导出");
     }
-    el.btnExportSrt.addEventListener("click", () => exportSubtitles("srt", "subtitles.srt", "SRT"));
-    el.btnExportVtt.addEventListener("click", () => exportSubtitles("vtt", "subtitles.vtt", "VTT"));
+    el.btnExportSrt.addEventListener("click", () => exportSubtitles("srt", "subtitles", "SRT"));
+    el.btnExportVtt.addEventListener("click", () => exportSubtitles("vtt", "subtitles", "VTT"));
 
     fetch("/api/health/").then((r) => r.json()).then((h) => {
       if (h.chunk_duration_ms) el.chunkMs.textContent = String(h.chunk_duration_ms);

@@ -1,10 +1,10 @@
 {
-  "title": "AI 同声传译演示",
+  "title": "同声传译样例",
   "description": "内置英文技术演讲样例，用于离线字幕演示",
   "lines": [
     {
-      "source": "Welcome to the AI simultaneous interpretation demo.",
-      "target": "欢迎使用 AI 同声传译演示。",
+      "source": "Hello, this is a live interpretation demo built with Django and Whisper.",
+      "target": "你好，这是基于 Django 与 Whisper 的同声传译演示。",
       "delay_ms": 1200,
       "start_sec": 0,
       "end_sec": 3.2
@@ -39,8 +39,8 @@
       "end_sec": 17.0
     },
     {
-      "source": "Thank you for watching this demonstration.",
-      "target": "感谢观看本次演示。",
+      "source": "Subtitles can be exported as SRT, VTT, or a ZIP archive.",
+      "target": "字幕可导出为 SRT、VTT 或 ZIP 压缩包。",
       "delay_ms": 1000,
       "start_sec": 17.0,
       "end_sec": 19.5
