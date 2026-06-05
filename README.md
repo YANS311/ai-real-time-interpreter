@@ -18,6 +18,8 @@
 | 延迟指标 / 状态指示器 | ✅ |
 | 多语种源语言（英/日/韩→中文） | ✅ |
 | 七牛云 Kodo 音视频云端存储 | ✅（需配置密钥） |
+| 视频 BGM 检测 + 人声分离 | ✅ |
+| SRT 字幕导出 | ✅ |
 | 异常熔断（ASR/LLM） | ✅ |
 
 ## 技术栈
@@ -92,6 +94,8 @@ python manage.py runserver
 2. 上传本地 `.mp3` / `.mp4`，文件会先上传七牛（若已配置），再流式同传
 3. 故意说模糊发音，观察历史字幕 **「已纠错」** 标记
 4. 勾选/取消 **中文语音播报** 测试 TTS
+5. 上传带 **背景音乐的视频**，勾选「人声分离」，观察 BGM 状态与识别准确率
+6. 点击 **导出 SRT** 下载字幕文件
 
 ## 项目结构
 
@@ -125,6 +129,8 @@ ai-real-time-interpreter/
 | `/api/health/` | GET | 健康检查、延迟配置、熔断状态 |
 | `/api/audio/chunk/` | POST | 音频分片 → ASR + 翻译 + 纠错 |
 | `/api/upload/` | POST | 完整文件上传七牛云 |
+| `/api/video/ingest/` | POST | 视频/音频预处理（BGM 检测、人声分离） |
+| `/api/export/subtitles/` | GET | 导出 SRT/TXT 字幕 |
 | `/api/session/reset/` | POST | 清空会话 |
 | `/api/tts/` | POST | 中文 TTS |
 

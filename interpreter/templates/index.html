@@ -180,6 +180,7 @@
     <div class="metrics">
       <span class="metric-pill">延迟 <strong id="latencyMs">--</strong> ms</span>
       <span class="metric-pill">分片 <strong id="chunkMs">300</strong> ms</span>
+      <span class="metric-pill" id="bgmPill">BGM <strong id="bgmStatus">--</strong></span>
       <span class="metric-pill" id="qiniuPill">七牛 <strong>--</strong></span>
     </div>
   </header>
@@ -199,6 +200,7 @@
         <option value="ko">韩语 → 中文</option>
       </select>
       <button id="btnClear" class="btn-secondary">清空字幕</button>
+      <button id="btnExportSrt" class="btn-secondary">导出 SRT</button>
     </div>
 
     <div class="status-bar">
@@ -218,12 +220,15 @@
     <div class="options">
       <label><input type="checkbox" id="chkTts" checked /> 中文语音播报</label>
       <label><input type="checkbox" id="chkPartial" checked /> 显示临时字幕</label>
+      <label><input type="checkbox" id="chkBgm" checked /> 视频/BGM 人声分离（提升识别率）</label>
     </div>
   </main>
 
   <script>
     const API_CHUNK = "/api/audio/chunk/";
     const API_UPLOAD = "/api/upload/";
+    const API_VIDEO_INGEST = "/api/video/ingest/";
+    const API_EXPORT = "/api/export/subtitles/";
     const API_RESET = "/api/session/reset/";
     const API_TTS = "/api/tts/";
     const CHUNK_INTERVAL_MS = 300;
@@ -240,6 +245,9 @@
       btnMic: document.getElementById("btnMic"),
       btnStop: document.getElementById("btnStop"),
       btnClear: document.getElementById("btnClear"),
+      btnExportSrt: document.getElementById("btnExportSrt"),
+      chkBgm: document.getElementById("chkBgm"),
+      bgmStatus: document.getElementById("bgmStatus"),
       fileInput: document.getElementById("fileInput"),
       sourceLang: document.getElementById("sourceLang"),
       statusText: document.getElementById("statusText"),
@@ -306,17 +314,26 @@
       renderSubtitles();
     }
 
-    function addSubtitle(source, target, partial) {
+    function addSubtitle(source, target, partial, meta = {}) {
       if (!target && !source) return;
       const last = subtitles[subtitles.length - 1];
+      const row = {
+        source, target, partial, corrected: false,
+        start_sec: meta.start_sec, end_sec: meta.end_sec,
+      };
       if (last?.partial) {
-        last.source = source;
-        last.target = target;
-        last.partial = partial;
+        Object.assign(last, row);
       } else {
-        subtitles.push({ source, target, partial, corrected: false });
+        subtitles.push(row);
       }
       renderSubtitles();
+    }
+
+    function setBgmInfo(bgm) {
+      if (!bgm) return;
+      const label = bgm.separated ? "已分离" : (bgm.has_bgm ? "已检测" : "无");
+      el.bgmStatus.textContent = label;
+      if (bgm.message) setStatus(bgm.message, bgm.has_bgm ? "warn" : "live");
     }
 
     async function playTts(text) {
@@ -376,12 +393,70 @@
     }
 
     async function handleResponse(data) {
+      if (data.bgm) setBgmInfo(data.bgm);
       if (data.corrections?.length) applyCorrections(data.corrections);
       if (data.subtitle) {
-        const { source, target, is_partial } = data.subtitle;
-        addSubtitle(source, target, is_partial);
+        const { source, target, is_partial, start_sec, end_sec } = data.subtitle;
+        addSubtitle(source, target, is_partial, { start_sec, end_sec });
         if (target && !is_partial) await playTts(target);
       }
+    }
+
+    async function pullProcessed(flush = false) {
+      const fd = new FormData();
+      fd.append("pull_processed", "1");
+      fd.append("session_id", sessionId);
+      fd.append("source_lang", el.sourceLang.value);
+      if (flush) fd.append("flush", "1");
+      const t0 = performance.now();
+      const res = await fetch(API_CHUNK, {
+        method: "POST",
+        headers: { "X-Session-Id": sessionId },
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.latency_ms != null) updateLatency(data.latency_ms);
+      else updateLatency(Math.round(performance.now() - t0));
+      return data;
+    }
+
+    function isVideoFile(file) {
+      return /\.(mp4|mkv|mov|avi|webm|flv|wmv|m4v)$/i.test(file.name);
+    }
+
+    async function ingestMediaFile(file) {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("session_id", sessionId);
+      fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
+      const res = await fetch(API_VIDEO_INGEST, {
+        method: "POST",
+        headers: { "X-Session-Id": sessionId },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "ingest failed");
+      if (data.session_id) {
+        sessionId = data.session_id;
+        localStorage.setItem("interpreter_session", sessionId);
+      }
+      if (data.qiniu?.url) {
+        el.qiniuLink.hidden = false;
+        el.qiniuLink.innerHTML = '云端文件：<a href="' + data.qiniu.url + '" target="_blank" rel="noopener">' + data.qiniu.url + '</a>';
+      }
+      setBgmInfo(data.bgm);
+      return data;
+    }
+
+    async function streamProcessedFile() {
+      while (true) {
+        const data = await pullProcessed(false);
+        await handleResponse(data);
+        if (data.file_eof) break;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const tail = await pullProcessed(true);
+      await handleResponse(tail);
     }
 
     async function startMic() {
@@ -420,44 +495,52 @@
     }
 
     async function processFile(file) {
-      setStatus("上传至七牛云并解析: " + file.name, "live");
       el.btnMic.disabled = true;
+      const useServer = isVideoFile(file) || el.chkBgm.checked;
+
       try {
-        const up = await uploadToQiniu(file);
-        if (up.qiniu?.url) {
-          el.qiniuLink.hidden = false;
-          el.qiniuLink.innerHTML = '云端文件：<a href="' + up.qiniu.url + '" target="_blank" rel="noopener">' + up.qiniu.url + '</a>';
+        if (useServer) {
+          setStatus("服务端解析音轨 + BGM 人声分离: " + file.name, "live");
+          await ingestMediaFile(file);
+          setStatus("流式同传识别中…", "live");
+          await streamProcessedFile();
+          setStatus("文件同传完成" + (el.chkBgm.checked ? "（已抑制 BGM）" : ""));
+        } else {
+          setStatus("浏览器流式解析: " + file.name, "live");
+          const up = await uploadToQiniu(file);
+          if (up.qiniu?.url) {
+            el.qiniuLink.hidden = false;
+            el.qiniuLink.innerHTML = '云端文件：<a href="' + up.qiniu.url + '" target="_blank" rel="noopener">' + up.qiniu.url + '</a>';
+          }
+          const url = URL.createObjectURL(file);
+          const audio = new Audio(url);
+          await new Promise((res, rej) => { audio.onloadedmetadata = res; audio.onerror = rej; });
+          const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
+          const stream = audio.captureStream?.() || audio.mozCaptureStream?.();
+          if (!stream) throw new Error("请使用 Chrome/Edge 进行文件同传");
+          const rec = new MediaRecorder(stream, { mimeType: mime });
+          rec.ondataavailable = async (ev) => {
+            if (!ev.data.size) return;
+            await handleResponse(await sendChunk(ev.data, "webm"));
+          };
+          rec.start(CHUNK_INTERVAL_MS);
+          audio.play();
+          await new Promise((res) => {
+            audio.onended = async () => {
+              rec.stop();
+              await new Promise((r) => (rec.onstop = r));
+              await handleResponse(await sendChunk(new Blob(), "webm", true));
+              URL.revokeObjectURL(url);
+              res();
+            };
+          });
+          setStatus("文件同传完成");
         }
-      } catch (e) { console.warn("Qiniu upload skipped", e); }
-
-      const url = URL.createObjectURL(file);
-      const audio = new Audio(url);
-      await new Promise((res, rej) => { audio.onloadedmetadata = res; audio.onerror = rej; });
-
-      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-      const stream = audio.captureStream?.() || audio.mozCaptureStream?.();
-      if (!stream) {
-        setStatus("请使用 Chrome/Edge 进行文件同传", "warn");
+      } catch (e) {
+        setStatus("文件处理失败: " + e.message, "error");
+      } finally {
         el.btnMic.disabled = false;
-        URL.revokeObjectURL(url);
-        return;
       }
-
-      const rec = new MediaRecorder(stream, { mimeType: mime });
-      rec.ondataavailable = async (ev) => {
-        if (!ev.data.size) return;
-        await handleResponse(await sendChunk(ev.data, "webm"));
-      };
-      rec.start(CHUNK_INTERVAL_MS);
-      audio.play();
-      audio.onended = async () => {
-        rec.stop();
-        await new Promise((r) => (rec.onstop = r));
-        await handleResponse(await sendChunk(new Blob(), "webm", true));
-        URL.revokeObjectURL(url);
-        el.btnMic.disabled = false;
-        setStatus("文件同传完成");
-      };
     }
 
     el.btnMic.addEventListener("click", startMic);
@@ -479,6 +562,26 @@
       setStatus("字幕已清空");
     });
     el.chkPartial.addEventListener("change", renderSubtitles);
+    el.btnExportSrt.addEventListener("click", async () => {
+      if (!subtitles.length) {
+        setStatus("暂无字幕可导出", "warn");
+        return;
+      }
+      const res = await fetch(API_EXPORT + "?format=srt", {
+        headers: { "X-Session-Id": sessionId },
+      });
+      if (!res.ok) {
+        setStatus("导出失败", "error");
+        return;
+      }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "subtitles.srt";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus("SRT 字幕已导出");
+    });
 
     fetch("/api/health/").then((r) => r.json()).then((h) => {
       if (h.chunk_duration_ms) el.chunkMs.textContent = String(h.chunk_duration_ms);
