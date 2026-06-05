@@ -1,5 +1,5 @@
 """
-API：音频流接收、字幕返回、纠错、TTS。
+API：音频流接收、字幕返回、纠错、TTS、七牛上传。
 """
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
-from .utils.asr import transcribe_stream_chunk
+from .utils.circuit_breaker import get_asr_breaker, get_llm_breaker
+from .utils.pipeline import process_audio_segment
+from .utils.qiniu_storage import is_qiniu_configured, upload_bytes
 from .utils.stream import (
     cleanup_stale_sessions,
     float32_pcm_to_int16,
@@ -21,7 +23,6 @@ from .utils.stream import (
     webm_to_pcm,
     wav_bytes_to_pcm,
 )
-from .utils.translate import translate_with_correction
 from .utils.tts import synthesize_speech
 
 
@@ -37,16 +38,33 @@ def _session_id(request) -> str:
     return sid or str(uuid.uuid4())
 
 
+def _decode_audio(raw: bytes, fmt: str, sample_rate: int) -> tuple[bytes, int]:
+    """统一音频解码入口。"""
+    if fmt == "webm":
+        return webm_to_pcm(raw), 16000
+    if fmt == "wav":
+        return wav_bytes_to_pcm(raw)
+    if fmt == "pcm_float":
+        return float32_pcm_to_int16(raw), sample_rate
+    return raw, sample_rate
+
+
+def _empty_chunk_response(session_id: str) -> dict:
+    return {
+        "session_id": session_id,
+        "asr": {"text": "", "language": "", "is_partial": True},
+        "translation": "",
+        "corrections": [],
+        "subtitle": None,
+        "latency_ms": 0,
+    }
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_audio_chunk(request):
     """
-    接收音频分片（webm / wav / 原始 pcm）。
-    FormData:
-      - audio: 文件
-      - format: webm | wav | pcm | pcm_float
-      - sample_rate: 16000（pcm 时）
-      - flush: 1 表示结束并处理剩余缓冲
+    接收音频分片（webm / wav / pcm），流式 ASR + 翻译纠错。
     """
     cleanup_stale_sessions(settings.SESSION_TTL)
     session_id = _session_id(request)
@@ -60,63 +78,67 @@ def api_audio_chunk(request):
     fmt = (request.POST.get("format") or "webm").lower()
     sample_rate = int(request.POST.get("sample_rate") or 16000)
     flush = request.POST.get("flush") == "1"
+    source_lang = request.POST.get("source_lang") or "auto"
 
     try:
-        if fmt == "webm":
-            pcm = webm_to_pcm(raw)
-            sample_rate = 16000
-        elif fmt == "wav":
-            pcm, sample_rate = wav_bytes_to_pcm(raw)
-        elif fmt == "pcm_float":
-            pcm = float32_pcm_to_int16(raw)
-        else:
-            pcm = raw
+        pcm, sample_rate = _decode_audio(raw, fmt, sample_rate)
         session.sample_rate = sample_rate
         session.append_chunk(pcm)
     except Exception as e:
         return JsonResponse({"error": f"audio decode failed: {e}"}, status=400)
 
-    segment = None
-    if flush:
-        segment = session.flush_all()
-    else:
-        segment = session.take_segment(min_duration_sec=1.2)
-
-    result = {
-        "session_id": session_id,
-        "asr": {"text": "", "language": "", "is_partial": True},
-        "translation": "",
-        "corrections": [],
-        "subtitle": None,
-        "tts_available": False,
-    }
-
+    segment = session.flush_all() if flush else session.take_segment()
     if not segment:
-        return JsonResponse(result)
+        return JsonResponse(_empty_chunk_response(session_id))
 
-    asr = transcribe_stream_chunk(segment, session.sample_rate)
-    result["asr"] = asr
+    if get_asr_breaker().is_open() or get_llm_breaker().is_open():
+        return JsonResponse(
+            {
+                **_empty_chunk_response(session_id),
+                "error": "service temporarily unavailable (circuit open)",
+                "circuit": {
+                    "asr": get_asr_breaker().status(),
+                    "llm": get_llm_breaker().status(),
+                },
+            },
+            status=503,
+        )
 
-    source_text = asr.get("text", "").strip()
-    if not source_text:
-        return JsonResponse(result)
-
-    tr = translate_with_correction(source_text, session.history)
-    result["translation"] = tr.get("translation", "")
-    result["corrections"] = tr.get("corrections", [])
-    result["fallback"] = tr.get("fallback", False)
-
-    subtitle = {
-        "source": source_text,
-        "target": result["translation"],
-        "is_partial": asr.get("is_partial", False),
-    }
-    session.history.append(
-        {"source": source_text, "target": result["translation"]}
+    result = process_audio_segment(
+        segment,
+        session.sample_rate,
+        session.history,
+        source_lang=source_lang,
     )
-    result["subtitle"] = subtitle
-
+    result["session_id"] = session_id
     return JsonResponse(result)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_upload_file(request):
+    """
+    上传完整音视频文件：可选存七牛云，并返回云端 URL。
+    """
+    session_id = _session_id(request)
+    audio_file = request.FILES.get("file") or request.FILES.get("audio")
+    if not audio_file:
+        return JsonResponse({"error": "missing file"}, status=400)
+
+    raw = audio_file.read()
+    name = audio_file.name or "upload.bin"
+    content_type = audio_file.content_type or "application/octet-stream"
+
+    qiniu_result = upload_bytes(raw, name, content_type)
+    return JsonResponse(
+        {
+            "session_id": session_id,
+            "filename": name,
+            "size": len(raw),
+            "qiniu": qiniu_result,
+            "qiniu_enabled": is_qiniu_configured(),
+        }
+    )
 
 
 @csrf_exempt
@@ -134,10 +156,7 @@ def api_reset_session(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_tts(request):
-    """
-    中文 TTS，返回 MP3 二进制或 base64 JSON。
-    Body JSON: {"text": "...", "base64": true}
-    """
+    """中文 TTS，返回 MP3 二进制或 base64 JSON。"""
     try:
         body = json.loads(request.body.decode("utf-8"))
     except json.JSONDecodeError:
@@ -170,5 +189,11 @@ def api_health(request):
             "status": "ok",
             "whisper_model": settings.WHISPER_MODEL,
             "llm_configured": bool(settings.LLM_API_KEY),
+            "qiniu_configured": is_qiniu_configured(),
+            "chunk_duration_ms": int(settings.AUDIO_CHUNK_DURATION_SEC * 1000),
+            "circuit": {
+                "asr": get_asr_breaker().status(),
+                "llm": get_llm_breaker().status(),
+            },
         }
     )
