@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# 本地快速自测：健康检查 + 演示脚本 + 状态页
+set -euo pipefail
+
+BASE="${1:-http://127.0.0.1:8000}"
+
+echo "==> health"
+curl -sf "$BASE/api/health/" | python3 -m json.tool
+
+echo "==> status"
+curl -sf "$BASE/api/status/" | python3 -m json.tool
+
+echo "==> demo script"
+LINES=$(curl -sf "$BASE/api/demo/script/" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('lines',[])))")
+echo "demo lines: $LINES"
+
+echo "==> index page"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/")
+test "$CODE" = "200"
+
+echo "==> status page"
+CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/status/")
+test "$CODE" = "200"
+
+echo "OK: selftest passed"
