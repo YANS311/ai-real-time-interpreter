@@ -15,7 +15,7 @@
 | Edge-TTS 中文语音播报 | ✅ |
 | 视频 BGM 检测 + 人声分离（Spleeter 可选） | ✅ |
 | 环境降噪（noisereduce） | ✅ |
-| 双语字幕 / SRT / TXT / ZIP 导出 | ✅ |
+| 双语字幕 / SRT / VTT / TXT / ZIP 导出 | ✅ |
 | 同传历史记录保存与回看 | ✅ |
 | 识别质量评分（质量分 / 信噪比 / 延迟） | ✅ |
 | 一键演示模式（答辩样例字幕） | ✅ |
@@ -28,6 +28,8 @@
 | 低延迟 / 高准确率双模式 | ✅ |
 | 七牛云 Kodo 云端存储 | ✅（可选，需配置） |
 | Docker Compose 一键部署 | ✅ |
+| GitHub Actions CI 自动检查 | ✅ |
+| 快捷键（D 演示 / P 演讲 / 空格暂停） | ✅ |
 
 ## 技术栈
 
@@ -399,7 +401,7 @@ ai-real-time-interpreter/
 | `/api/history/` | GET | 历史记录列表 |
 | `/api/history/save/` | POST | 保存当前会话 |
 | `/api/upload/` | POST | 上传七牛云（可选） |
-| `/api/export/subtitles/` | GET/POST | 导出 SRT/TXT |
+| `/api/export/subtitles/` | GET/POST | 导出 SRT/VTT/TXT |
 | `/api/export/bundle/` | GET/POST | 导出 ZIP 字幕包 |
 | `/api/tts/` | POST | 中文 TTS |
 
