@@ -1,0 +1,49 @@
+{
+  "title": "AI 同声传译演示",
+  "description": "模拟英文技术演讲 → 实时中文字幕（无需麦克风/视频）",
+  "lines": [
+    {
+      "source": "Welcome to the AI simultaneous interpretation demo.",
+      "target": "欢迎使用 AI 同声传译演示。",
+      "delay_ms": 1200,
+      "start_sec": 0,
+      "end_sec": 3.2
+    },
+    {
+      "source": "This system uses streaming Whisper for speech recognition.",
+      "target": "本系统使用流式 Whisper 进行语音识别。",
+      "delay_ms": 1400,
+      "start_sec": 3.2,
+      "end_sec": 6.8
+    },
+    {
+      "source": "Large language models provide real-time Chinese subtitles.",
+      "target": "大模型提供实时中文字幕。",
+      "delay_ms": 1300,
+      "start_sec": 6.8,
+      "end_sec": 10.0
+    },
+    {
+      "source": "It can automatically correct previous translation errors.",
+      "target": "还能自动修正之前识别或翻译的错误。",
+      "delay_ms": 1500,
+      "start_sec": 10.0,
+      "end_sec": 13.5,
+      "corrected": false
+    },
+    {
+      "source": "Background music in videos can be separated from vocals.",
+      "target": "视频中的背景音乐可与人声分离处理。",
+      "delay_ms": 1400,
+      "start_sec": 13.5,
+      "end_sec": 17.0
+    },
+    {
+      "source": "Thank you for watching this demonstration.",
+      "target": "感谢观看本次演示。",
+      "delay_ms": 1000,
+      "start_sec": 17.0,
+      "end_sec": 19.5
+    }
+  ]
+}
