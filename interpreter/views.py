@@ -16,7 +16,8 @@ from django.views.decorators.http import require_GET, require_http_methods
 from .utils.audio_process import is_spleeter_available
 from .utils.bgm import is_video_file, prepare_media_for_interpretation
 from .utils.circuit_breaker import get_asr_breaker, get_llm_breaker
-from .utils.export import subtitles_to_srt, subtitles_to_txt
+from .utils.subtitle_export import export_subtitles
+from .utils.video_extract import extract_audio_from_media, is_supported_media
 from .utils.pipeline import process_audio_segment
 from .utils.qiniu_storage import is_qiniu_configured, upload_bytes
 from .utils.stream import (
@@ -199,7 +200,14 @@ def api_video_ingest(request):
     if is_video_file(name):
         separate_bgm = request.POST.get("separate_bgm", "1") != "0"
 
+    if not is_supported_media(name):
+        return JsonResponse(
+            {"error": f"unsupported format: {name}. use MP4/MOV/AVI or common audio"},
+            status=400,
+        )
+
     try:
+        _, wav_bytes, _, extract_meta = extract_audio_from_media(raw, name)
         pcm, sample_rate, bgm_info = prepare_media_for_interpretation(
             raw,
             name,
@@ -208,6 +216,7 @@ def api_video_ingest(request):
             separation_method=separation_method,
         )
         session.load_processed_file(pcm, sample_rate, bgm_info)
+        bgm_info["extract"] = extract_meta
     except Exception as e:
         return JsonResponse({"error": f"media process failed: {e}"}, status=400)
 
@@ -217,11 +226,13 @@ def api_video_ingest(request):
         {
             "session_id": session_id,
             "filename": name,
+            "video": extract_meta,
             "bgm": bgm_info,
+            "wav_size": len(wav_bytes),
             "pcm_duration_sec": round(len(pcm) / (sample_rate * 2), 2),
             "qiniu": qiniu_result,
             "ready": True,
-            "message": "预处理完成，请开始拉取分片 (pull_processed=1)",
+            "message": "视频音频提取完成，已进入流式识别队列",
         }
     )
 
@@ -274,11 +285,9 @@ def api_export_subtitles(request):
     if not items:
         return JsonResponse({"error": "no subtitles"}, status=404)
 
+    content = export_subtitles(items, fmt)
     if fmt == "txt":
-        content = subtitles_to_txt(items)
         return HttpResponse(content, content_type="text/plain; charset=utf-8")
-
-    content = subtitles_to_srt(items)
     return HttpResponse(
         content,
         content_type="application/x-subrip; charset=utf-8",

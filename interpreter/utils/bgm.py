@@ -3,7 +3,6 @@
 """
 from __future__ import annotations
 
-import io
 import logging
 import struct
 from typing import Any, Literal
@@ -15,34 +14,19 @@ from .audio_process import (
     is_spleeter_available,
     separate_vocals,
 )
+from .video_extract import (
+    is_video_file,
+    load_media_segment,
+    segment_to_pcm,
+)
 
 logger = logging.getLogger(__name__)
-
-VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v"}
-AUDIO_EXTENSIONS = {".mp3", ".wav", ".flac", ".aac", ".ogg", ".m4a", ".wma"}
 
 SeparationMethod = Literal["auto", "spleeter", "fast"]
 
 
-def _extension(filename: str) -> str:
-    if "." not in filename:
-        return ""
-    return "." + filename.rsplit(".", 1)[-1].lower()
-
-
-def is_video_file(filename: str) -> bool:
-    return _extension(filename) in VIDEO_EXTENSIONS
-
-
-def media_bytes_to_segment(raw: bytes, filename: str) -> AudioSegment:
-    """从音视频字节提取 AudioSegment（依赖 ffmpeg，Win/Mac/Linux 通用）。"""
-    ext = _extension(filename).lstrip(".") or "mp4"
-    return AudioSegment.from_file(io.BytesIO(raw), format=ext)
-
-
 def _segment_to_mono_pcm(segment: AudioSegment, target_rate: int = 16000) -> bytes:
-    seg = segment.set_frame_rate(target_rate).set_channels(1).set_sample_width(2)
-    return seg.raw_data
+    return segment_to_pcm(segment, target_rate)
 
 
 def _pcm_to_numpy(pcm: bytes) -> np.ndarray:
@@ -101,7 +85,7 @@ def prepare_media_for_interpretation(
     """
     完整预处理：提取音轨 → BGM 检测 → 人声分离(Spleeter/快速) → 降噪 → 16kHz PCM。
     """
-    audio = media_bytes_to_segment(raw, filename)
+    audio = load_media_segment(raw, filename)
     duration_sec = len(audio) / 1000.0
 
     raw_pcm = _segment_to_mono_pcm(audio, target_rate)
