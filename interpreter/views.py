@@ -340,8 +340,8 @@ def api_export_bundle(request):
 @require_http_methods(["GET", "POST"])
 def api_export_subtitles(request):
     """
-    导出字幕 SRT / TXT。
-    GET/POST: format=srt|txt, 可选 body JSON {"items": [...]}，否则用会话历史。
+    导出字幕 SRT / VTT / TXT。
+    GET/POST: format=srt|vtt|txt, 可选 body JSON {"items": [...]}，否则用会话历史。
     """
     session_id = _session_id(request)
     session = get_or_create_session(session_id)
@@ -362,6 +362,12 @@ def api_export_subtitles(request):
     content = export_subtitles(items, fmt)
     if fmt == "txt":
         return HttpResponse(content, content_type="text/plain; charset=utf-8")
+    if fmt == "vtt":
+        return HttpResponse(
+            content,
+            content_type="text/vtt; charset=utf-8",
+            headers={"Content-Disposition": 'attachment; filename="subtitles.vtt"'},
+        )
     return HttpResponse(
         content,
         content_type="application/x-subrip; charset=utf-8",
