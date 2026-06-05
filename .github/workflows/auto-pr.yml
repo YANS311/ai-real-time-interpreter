@@ -1,0 +1,51 @@
+# 推送 feature/* 分支时，自动创建或更新 Pull Request
+# 使用仓库内置 GITHUB_TOKEN，无需额外配置
+
+name: Auto Pull Request
+
+on:
+  push:
+    branches:
+      - "feature/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  create-or-update-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="${{ github.ref_name }}"
+          BASE="main"
+          TITLE=$(git log -1 --pretty=%s)
+          COMMITS=$(git log "origin/${BASE}..HEAD" --pretty=format:"- %s" 2>/dev/null | head -8 || echo "- ${TITLE}")
+          BODY="【本日开发进展】
+          1. 新增功能：
+          ${COMMITS}
+          2. 优化内容：
+          - 见上方 commit 列表
+          3. 遗留待优化（若无就填：无）：
+          - 无
+
+          【自测结果】
+          CI 自动触发，请确认本地 python manage.py check 通过
+
+          关联议题：第三批次题目二 AI同声传译助手"
+
+          EXISTING=$(gh pr list --head "$BRANCH" --base "$BASE" --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then
+            gh pr edit "$EXISTING" --title "$TITLE" --body "$BODY"
+            echo "Updated PR #$EXISTING"
+          else
+            gh pr create --base "$BASE" --head "$BRANCH" --title "$TITLE" --body "$BODY"
+            echo "Created new PR"
+          fi

@@ -54,3 +54,23 @@ git push
 本地全量运行正常，全功能可演示，无运行报错
 关联议题：第三批次题目二 AI同声传译助手
 ```
+
+## 自动创建 PR（三种方式）
+
+### 方式 1：本地脚本（推荐）
+
+```bash
+chmod +x scripts/create-pr.sh
+./scripts/create-pr.sh                    # 当前分支 → main
+./scripts/create-pr.sh feature/同传优化 main "feat(audio): BGM人声分离"
+```
+
+安装 [GitHub CLI](https://cli.github.com/) 后可一键打开 PR；未安装时会打印链接和完整描述供复制。
+
+### 方式 2：GitHub Actions 自动 PR
+
+推送 `feature/**` 分支后，`.github/workflows/auto-pr.yml` 会自动创建或更新 PR（使用仓库内置 Token，**零配置**）。
+
+### 方式 3：GitHub PR 模板
+
+在 GitHub 网页手动建 PR 时，`.github/pull_request_template.md` 会自动填充描述框架。
