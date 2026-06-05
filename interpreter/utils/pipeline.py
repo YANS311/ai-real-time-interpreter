@@ -12,6 +12,7 @@ from django.conf import settings
 
 from .asr import transcribe_stream_chunk
 from .circuit_breaker import get_asr_breaker, get_llm_breaker
+from .quality import compute_segment_quality
 from .translate import apply_corrections_to_history, translate_with_correction
 
 logger = logging.getLogger(__name__)
@@ -74,6 +75,7 @@ def process_audio_segment(
     blocking: bool = True,
     segment_start_sec: float = 0.0,
     segment_duration_sec: float | None = None,
+    bgm_info: dict | None = None,
 ) -> dict[str, Any]:
     """
     处理一段 PCM 音频，返回 ASR + 翻译 + 纠错 + 延迟指标。
@@ -95,7 +97,11 @@ def process_audio_segment(
         }
 
         if not source_text:
-            result["latency_ms"] = int((time.perf_counter() - started) * 1000)
+            latency = int((time.perf_counter() - started) * 1000)
+            result["latency_ms"] = latency
+            result["quality"] = compute_segment_quality(
+                segment, asr, latency, bgm_info=bgm_info
+            )
             return result
 
         tr = _run_translate(source_text, history, source_lang)
@@ -135,7 +141,11 @@ def process_audio_segment(
             }
             for i, h in enumerate(history)
         ]
-        result["latency_ms"] = int((time.perf_counter() - started) * 1000)
+        latency = int((time.perf_counter() - started) * 1000)
+        result["latency_ms"] = latency
+        result["quality"] = compute_segment_quality(
+            segment, asr, latency, bgm_info=bgm_info
+        )
         return result
 
     if blocking:

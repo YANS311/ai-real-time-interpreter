@@ -83,6 +83,8 @@ def transcribe_pcm(
                     "start": seg.start,
                     "end": seg.end,
                     "text": t,
+                    "avg_logprob": getattr(seg, "avg_logprob", None),
+                    "no_speech_prob": getattr(seg, "no_speech_prob", None),
                 }
             )
 
@@ -95,6 +97,7 @@ def transcribe_pcm(
         "language": info.language or "",
         "is_partial": is_partial,
         "segments": seg_list,
+        "language_probability": getattr(info, "language_probability", None),
     }
 
 
