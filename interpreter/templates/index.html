@@ -340,7 +340,7 @@
       <button id="btnHistory" class="btn-secondary">历史记录</button>
       <button id="btnCopyAll" class="btn-secondary">复制全文</button>
       <button id="btnExportBundle" class="btn-secondary">导出 ZIP</button>
-      <button id="btnDemo" class="btn-secondary">一键演示</button>
+      <button id="btnDemo" class="btn-secondary">样例演示</button>
       <button id="btnPresent" class="btn-secondary">演讲模式</button>
     </div>
 
@@ -1181,7 +1181,7 @@
       el.btnDemo.disabled = true;
       subtitles.length = 0;
       renderSubtitles();
-      setStatus("演示模式播放中…", "live");
+      setStatus("样例播放中…", "live");
       try {
         const res = await fetch(API_DEMO);
         const script = await res.json();
@@ -1198,10 +1198,10 @@
           if (el.chkTts.checked && line.target) await playTts(line.target);
           await new Promise((r) => setTimeout(r, line.delay_ms || 1200));
         }
-        setStatus("演示完成 · " + (script.title || ""));
+        setStatus("样例播放完成 · " + (script.title || ""));
         scheduleAutoSave();
       } catch (e) {
-        setStatus("演示失败: " + e.message, "error");
+        setStatus("样例播放失败: " + e.message, "error");
       } finally {
         demoRunning = false;
         el.btnDemo.disabled = false;

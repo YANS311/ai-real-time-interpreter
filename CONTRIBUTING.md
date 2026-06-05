@@ -1,76 +1,37 @@
-# 贡献与提交规范（七牛云暑期实训）
+# 贡献说明
 
-## 仓库权限时间线
+## Commit 规范
 
-| 时间 | 要求 |
-|------|------|
-| 2026-06-07 23:59 前 | 保持仓库 **私有** |
-| 2026-06-08 00:00 起 | 改为 **公开**，供赛事审核 |
-| 2026-06-07 23:59 后 | 任何 push / 提交 **无效** |
+采用 [Conventional Commits](https://www.conventionalcommits.org/)：
 
-建议 **6.7 22:00 前** 完成最终代码、文档与 Demo 视频。
+```
+type(模块): 简短描述
+```
 
-## Commit 规范（Conventional Commits）
+常用 type：`feat`、`fix`、`perf`、`docs`、`refactor`、`chore`。
 
-格式：`type(模块): 简短描述`
-
-| type | 用途 |
-|------|------|
-| feat | 新增功能 |
-| fix | 修复 bug |
-| perf | 性能优化 |
-| docs | 文档 |
-| refactor | 重构 |
-| chore | 环境/依赖 |
-
-**禁止**：`update`、`修改代码`、`修复bug` 等无意义文案。
+示例：
 
 ```bash
-git add .
-git commit -m "feat(asr): 接入流式Whisper实时语音识别"
-git push
+git commit -m "feat(asr): 接入流式 Whisper 识别"
 ```
 
-## 分支与 PR
+## 分支
 
-- 开发分支：`feature/同传优化`、`fix/翻译纠错bug`
-- **不在 main 直接开发**，完成后提 PR 合并
+在 `feature/*` 或 `fix/*` 分支开发，通过 PR 合并到 `main`。
 
-### PR 标题示例
+## Pull Request
 
-`feat(core): 完成AI自动纠错历史译文+字幕SRT导出`
+PR 标题与 commit 风格一致。描述中建议包含：
 
-### PR 描述模板
+- 改动摘要
+- 如何自测（`python manage.py check`、`./scripts/selftest.sh`）
 
-```
-【本日开发进展】
-1. 新增功能：
-- xxx功能实现（麦克风实时收音/视频上传同传/译文自动修正）
-2. 优化内容：
-- 优化流式音频延迟、前端字幕渲染样式、Django接口稳定性
-3. 遗留待优化（若无就填：无）：
-- xxx
-【自测结果】
-本地全量运行正常，全功能可演示，无运行报错
-关联议题：第三批次题目二 AI同声传译助手
-```
-
-## 自动创建 PR（三种方式）
-
-### 方式 1：本地脚本（推荐）
+可用脚本辅助创建 PR：
 
 ```bash
 chmod +x scripts/create-pr.sh
-./scripts/create-pr.sh                    # 当前分支 → main
-./scripts/create-pr.sh feature/同传优化 main "feat(audio): BGM人声分离"
+./scripts/create-pr.sh
 ```
 
-安装 [GitHub CLI](https://cli.github.com/) 后可一键打开 PR；未安装时会打印链接和完整描述供复制。
-
-### 方式 2：GitHub Actions 自动 PR
-
-推送 `feature/**` 分支后，`.github/workflows/auto-pr.yml` 会自动创建或更新 PR（使用仓库内置 Token，**零配置**）。
-
-### 方式 3：GitHub PR 模板
-
-在 GitHub 网页手动建 PR 时，`.github/pull_request_template.md` 会自动填充描述框架。
+需要安装 [GitHub CLI](https://cli.github.com/)。

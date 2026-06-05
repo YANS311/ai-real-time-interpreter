@@ -303,7 +303,7 @@ def api_upload_file(request):
 
 @require_GET
 def api_demo_script(request):
-    """演示模式预置字幕脚本。"""
+    """返回内置样例字幕脚本。"""
     return JsonResponse(load_demo_script())
 
 

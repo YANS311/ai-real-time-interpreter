@@ -79,7 +79,7 @@ AUDIO_CHUNK_DURATION_SEC = float(os.getenv("AUDIO_CHUNK_DURATION_SEC", "0.3"))
 # 管线超时（秒）
 PIPELINE_TIMEOUT_SEC = int(os.getenv("PIPELINE_TIMEOUT_SEC", "120"))
 
-# 七牛云 Kodo（可选，加分项）
+# 七牛云 Kodo（可选）
 QINIU_ACCESS_KEY = os.getenv("QINIU_ACCESS_KEY", "")
 QINIU_SECRET_KEY = os.getenv("QINIU_SECRET_KEY", "")
 QINIU_BUCKET = os.getenv("QINIU_BUCKET", "")

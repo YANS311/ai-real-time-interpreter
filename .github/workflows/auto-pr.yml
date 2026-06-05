@@ -28,18 +28,14 @@ jobs:
           BASE="main"
           TITLE=$(git log -1 --pretty=%s)
           COMMITS=$(git log "origin/${BASE}..HEAD" --pretty=format:"- %s" 2>/dev/null | head -8 || echo "- ${TITLE}")
-          BODY="【本日开发进展】
-          1. 新增功能：
+          BODY="## Summary
+
           ${COMMITS}
-          2. 优化内容：
-          - 见上方 commit 列表
-          3. 遗留待优化（若无就填：无）：
-          - 无
 
-          【自测结果】
-          CI 自动触发，请确认本地 python manage.py check 通过
+          ## Test plan
 
-          关联议题：第三批次题目二 AI同声传译助手"
+          - [ ] python manage.py check
+          - [ ] ./scripts/selftest.sh"
 
           EXISTING=$(gh pr list --head "$BRANCH" --base "$BASE" --json number --jq '.[0].number' 2>/dev/null || true)
           if [ -n "$EXISTING" ] && [ "$EXISTING" != "null" ]; then

@@ -1,6 +1,4 @@
-"""
-演示模式：预置字幕脚本，答辩一键演示。
-"""
+"""内置样例字幕脚本，用于离线演示。"""
 from __future__ import annotations
 
 import json

@@ -1,6 +1,6 @@
 {
   "title": "AI 同声传译演示",
-  "description": "模拟英文技术演讲 → 实时中文字幕（无需麦克风/视频）",
+  "description": "内置英文技术演讲样例，用于离线字幕演示",
   "lines": [
     {
       "source": "Welcome to the AI simultaneous interpretation demo.",
