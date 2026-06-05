@@ -143,7 +143,13 @@
       background: rgba(245, 158, 11, 0.08);
     }
     .subtitle-item .source { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
-    .subtitle-item .target { font-size: 1rem; font-weight: 500; }
+    .subtitle-item .target { font-size: 1rem; font-weight: 500; color: #f0f6ff; }
+    .subtitle-item.bilingual .target { font-size: 1.08rem; font-weight: 600; }
+    .subtitle-item.bilingual .source {
+      margin-top: 0.4rem; padding-top: 0.4rem;
+      border-top: 1px dashed var(--border);
+      font-style: italic;
+    }
     .badge {
       display: inline-block;
       font-size: 0.68rem;
@@ -220,7 +226,16 @@
     <div class="options">
       <label><input type="checkbox" id="chkTts" checked /> 中文语音播报</label>
       <label><input type="checkbox" id="chkPartial" checked /> 显示临时字幕</label>
-      <label><input type="checkbox" id="chkBgm" checked /> 视频/BGM 人声分离（提升识别率）</label>
+      <label><input type="checkbox" id="chkBgm" checked /> BGM 人声分离（Spleeter/快速）</label>
+      <label><input type="checkbox" id="chkDenoise" checked /> 环境降噪（风声/杂音）</label>
+      <label><input type="checkbox" id="chkBilingual" checked /> 双语字幕（中文在上·原文在下）</label>
+      <label>
+        模式
+        <select id="modeSelect" class="lang-select">
+          <option value="low">低延迟（直播/麦克风 300ms）</option>
+          <option value="high">高准确率（视频文件 800ms）</option>
+        </select>
+      </label>
     </div>
   </main>
 
@@ -231,7 +246,7 @@
     const API_EXPORT = "/api/export/subtitles/";
     const API_RESET = "/api/session/reset/";
     const API_TTS = "/api/tts/";
-    const CHUNK_INTERVAL_MS = 300;
+    let CHUNK_INTERVAL_MS = 300;
 
     let sessionId = localStorage.getItem("interpreter_session") || crypto.randomUUID();
     localStorage.setItem("interpreter_session", sessionId);
@@ -247,6 +262,9 @@
       btnClear: document.getElementById("btnClear"),
       btnExportSrt: document.getElementById("btnExportSrt"),
       chkBgm: document.getElementById("chkBgm"),
+      chkDenoise: document.getElementById("chkDenoise"),
+      chkBilingual: document.getElementById("chkBilingual"),
+      modeSelect: document.getElementById("modeSelect"),
       bgmStatus: document.getElementById("bgmStatus"),
       fileInput: document.getElementById("fileInput"),
       sourceLang: document.getElementById("sourceLang"),
@@ -284,11 +302,21 @@
       subtitles.forEach((item, idx) => {
         if (!showPartial && item.partial) return;
         const div = document.createElement("div");
-        div.className = "subtitle-item" + (item.partial ? " partial" : "") + (item.corrected ? " corrected" : "");
-        div.innerHTML =
-          `<div class="source">${escapeHtml(item.source || "")}</div>` +
-          `<div class="target">${escapeHtml(item.target || "")}` +
-          (item.corrected ? '<span class="badge">已纠错</span>' : "") + `</div>`;
+        const bilingual = el.chkBilingual?.checked;
+        div.className = "subtitle-item" +
+          (item.partial ? " partial" : "") +
+          (item.corrected ? " corrected" : "") +
+          (bilingual ? " bilingual" : "");
+        const badge = item.corrected ? '<span class="badge">已纠错</span>' : "";
+        if (bilingual) {
+          div.innerHTML =
+            `<div class="target">${escapeHtml(item.target || "")}${badge}</div>` +
+            `<div class="source">${escapeHtml(item.source || "")}</div>`;
+        } else {
+          div.innerHTML =
+            `<div class="source">${escapeHtml(item.source || "")}</div>` +
+            `<div class="target">${escapeHtml(item.target || "")}${badge}</div>`;
+        }
         el.subtitleList.appendChild(div);
       });
       scrollToBottom();
@@ -359,6 +387,9 @@
       fd.append("format", format);
       fd.append("session_id", sessionId);
       fd.append("source_lang", el.sourceLang.value);
+      fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
+      fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
+      fd.append("separation_method", "auto");
       if (flush) fd.append("flush", "1");
 
       pendingRequests++;
@@ -429,6 +460,8 @@
       fd.append("file", file);
       fd.append("session_id", sessionId);
       fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
+      fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
+      fd.append("separation_method", "auto");
       const res = await fetch(API_VIDEO_INGEST, {
         method: "POST",
         headers: { "X-Session-Id": sessionId },
@@ -562,6 +595,12 @@
       setStatus("字幕已清空");
     });
     el.chkPartial.addEventListener("change", renderSubtitles);
+    el.chkBilingual.addEventListener("change", renderSubtitles);
+    el.modeSelect.addEventListener("change", () => {
+      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 800 : 300;
+      el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 300 ? "低延迟" : "高准确率") + "模式");
+    });
     el.btnExportSrt.addEventListener("click", async () => {
       if (!subtitles.length) {
         setStatus("暂无字幕可导出", "warn");
@@ -589,6 +628,7 @@
       const parts = [];
       if (h.llm_configured) parts.push("LLM 就绪");
       else parts.push("请配置 LLM_API_KEY");
+      if (h.spleeter_available) parts.push("Spleeter 就绪");
       if (h.circuit?.asr?.open || h.circuit?.llm?.open) setStatus("服务熔断中，请稍后重试", "warn");
       else setStatus("服务就绪 · " + parts.join(" · "));
     }).catch(() => setStatus("无法连接后端，请运行 python manage.py runserver", "error"));
