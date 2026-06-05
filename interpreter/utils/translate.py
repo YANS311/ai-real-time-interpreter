@@ -24,29 +24,15 @@ LANG_LABELS = {
     "fr": "法语",
 }
 
-SYSTEM_PROMPT = """你是专业同声传译助手。用户会提供：
-1. 历史字幕行（可能含识别错误，index 为全局行号）
-2. 当前新识别的原文片段
-3. 源语言提示
+SYSTEM_PROMPT = """你是同声传译。翻译当前英文为中文，简洁口语化。如有明显历史识别错误，用 corrections 修正。
 
-请完成：
-1. 将「当前原文」翻译成流畅的中文（同声传译风格，简洁口语化）
-2. 结合完整上下文，若历史行中存在明显 ASR 误识别或翻译错误，在 corrections 中给出修正
-3. 仅修正确信度高的错误，不要过度修改
-
-严格返回 JSON，不要 markdown：
-{
-  "translation": "当前片段的中文翻译",
-  "corrections": [
-    {"index": 0, "source": "修正后原文（无改动可省略）", "target": "修正后中文"}
-  ]
-}
-若无修正，corrections 为空数组。"""
+JSON格式：
+{"translation":"译文","corrections":[{"index":行号,"source":"修正原文","target":"修正译文"}]}"""
 
 
 def _call_llm(messages: list[dict]) -> str:
     """调用 OpenAI 兼容 API。"""
-    return call_llm(messages, temperature=0.3, json_mode=True)
+    return call_llm(messages, temperature=0.3, json_mode=True, max_tokens=512)
 
 
 def _parse_llm_json(raw: str) -> dict:
@@ -123,15 +109,11 @@ def translate_with_correction(
     ppt_block = format_ppt_prompt(ppt_context)
     ppt_section = f"\n\n{ppt_block}" if ppt_block else ""
 
-    user_content = f"""源语言：{lang_hint}
-
-历史字幕（index 为全局行号）：
+    user_content = f"""{lang_hint} | 历史：
 {history_text}
 
-当前新识别原文：
-{source_text}
-
-请翻译当前原文，并检查历史是否需要纠错。{glossary_section}{ppt_section}"""
+原文：{source_text}
+{glossary_section}{ppt_section}"""
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

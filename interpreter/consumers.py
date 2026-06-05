@@ -55,10 +55,23 @@ class InterpreterConsumer(AsyncWebsocketConsumer):
         if action == "ping":
             await self.send(text_data=json.dumps({"type": "pong"}))
             return
+        if action == "reset":
+            await self._handle_reset()
+            return
+        if action == "resync":
+            await self.send(text_data=json.dumps({"type": "resync_ok"}))
+            return
 
         await self.send(
             text_data=json.dumps({"type": "error", "error": f"unknown action: {action}"})
         )
+
+    async def _handle_reset(self) -> None:
+        try:
+            await sync_to_async(_reset_session_sync)(self.session_id)
+        except Exception as e:
+            logger.exception("WebSocket reset failed: %s", e)
+        await self.send(text_data=json.dumps({"type": "reset_ok"}))
 
     async def _handle_correct(self, data: dict) -> None:
         index = data.get("index")
@@ -110,3 +123,11 @@ def _apply_correction_sync(
     payload = apply_session_correction(session, index, new_text=new_text, mode=mode)
     save_session(session)
     return payload
+
+
+def _reset_session_sync(session_id: str) -> None:
+    from .utils.stream import save_session
+
+    session = get_or_create_session(session_id)
+    session.reset_buffer()
+    save_session(session)

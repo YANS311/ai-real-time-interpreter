@@ -68,6 +68,10 @@
       font-weight: 500;
     }
     button:disabled { opacity: 0.45; cursor: not-allowed; }
+    button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px var(--accent), 0 0 8px rgba(59,130,246,0.35);
+    }
     .btn-primary { background: var(--accent); color: #fff; }
     .btn-danger { background: var(--danger); color: #fff; }
     .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
@@ -173,6 +177,7 @@
       border: 1px solid rgba(255,255,255,0.08);
       backdrop-filter: blur(6px);
       border-left: 3px solid var(--accent);
+      line-height: 1.4;
     }
     .subtitle-item.speaker-a { border-left-color: #3b82f6; }
     .subtitle-item.speaker-b { border-left-color: #a855f7; }
@@ -182,7 +187,7 @@
       background: rgba(245, 158, 11, 0.08);
     }
     .subtitle-item .source { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
-    .subtitle-item .target { font-size: var(--sub-font-size, 1.15rem); font-weight: 600; color: var(--sub-color, #f0f6ff); }
+    .subtitle-item .target { font-size: var(--sub-font-size, 1.32rem); font-weight: 600; color: var(--sub-color, #f0f6ff); }
     .speaker-tag {
       display: inline-block; font-size: 0.68rem; padding: 0.1rem 0.4rem;
       border-radius: 4px; margin-right: 0.35rem; font-weight: 600;
@@ -229,7 +234,6 @@
       color: var(--muted);
     }
     .options label { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }
-    .qiniu-link { font-size: 0.75rem; color: var(--accent); word-break: break-all; margin-top: 0.5rem; }
     .history-drawer {
       position: fixed; right: 0; top: 0; width: min(360px, 92vw); height: 100vh;
       background: var(--card); border-left: 1px solid var(--border);
@@ -315,7 +319,6 @@
       <span class="metric-pill">均延迟 <strong id="avgLatency">--</strong> ms</span>
       <span class="metric-pill">分片 <strong id="chunkMs">300</strong> ms</span>
       <span class="metric-pill" id="bgmPill">BGM <strong id="bgmStatus">--</strong></span>
-      <span class="metric-pill" id="qiniuPill">七牛 <strong>--</strong></span>
       <span class="metric-pill" id="wsPill">WS <strong id="wsStatus">--</strong></span>
     </div>
   </header>
@@ -367,19 +370,19 @@
       <button id="btnExportBundle" class="btn-secondary">导出 ZIP</button>
       <button id="btnDemo" class="btn-secondary">样例演示</button>
       <button id="btnPresent" class="btn-secondary">演讲模式</button>
+      <button id="btnResetSession" class="btn-danger" style="margin-left:auto">重置会话</button>
     </div>
 
     <div class="status-bar">
       <span class="dot" id="statusDot"></span>
       <span id="statusText">就绪</span>
     </div>
-    <div id="qiniuLink" class="qiniu-link" hidden></div>
-
     <div class="subtitle-panel">
       <div class="subtitle-header">
         <span>实时字幕（深色面板 · 自动滚动）</span>
         <span id="sessionLabel"></span>
       </div>
+      <div id="wsStatusBar" style="display:none;padding:0.35rem 1rem;font-size:0.78rem;text-align:center;color:var(--muted);background:rgba(30,40,55,0.85);border-bottom:1px solid var(--border)"></div>
       <div class="subtitle-list" id="subtitleList"></div>
     </div>
 
@@ -472,7 +475,6 @@
 
   <script>
     const API_CHUNK = "/api/audio/chunk/";
-    const API_UPLOAD = "/api/upload/";
     const API_VIDEO_INGEST = "/api/video/ingest/";
     const API_EXPORT = "/api/export/subtitles/";
     const API_RESET = "/api/session/reset/";
@@ -500,6 +502,8 @@
     let wsSocket = null;
     let wsConnected = false;
     let wsReconnectTimer = null;
+    let wsRetryCount = 0;
+    const WS_MAX_RETRIES = 5;
     let correctingIndex = null;
 
     let sessionId = localStorage.getItem("interpreter_session") || crypto.randomUUID();
@@ -544,8 +548,6 @@
       sessionLabel: document.getElementById("sessionLabel"),
       latencyMs: document.getElementById("latencyMs"),
       chunkMs: document.getElementById("chunkMs"),
-      qiniuPill: document.getElementById("qiniuPill"),
-      qiniuLink: document.getElementById("qiniuLink"),
       chkTts: document.getElementById("chkTts"),
       chkPartial: document.getElementById("chkPartial"),
       qualityScore: document.getElementById("qualityScore"),
@@ -585,6 +587,8 @@
       styleOpacity: document.getElementById("styleOpacity"),
       stylePosition: document.getElementById("stylePosition"),
       subtitlePanel: document.querySelector(".subtitle-panel"),
+      wsStatusBar: document.getElementById("wsStatusBar"),
+      btnResetSession: document.getElementById("btnResetSession"),
     };
 
     el.sessionLabel.textContent = "会话 " + sessionId.slice(0, 8);
@@ -666,6 +670,15 @@
       return `${proto}//${location.host}/ws/interpreter/${sessionId}/`;
     }
 
+    function showWsBar(text) {
+      if (!el.wsStatusBar) return;
+      el.wsStatusBar.textContent = text;
+      el.wsStatusBar.style.display = "block";
+    }
+    function hideWsBar() {
+      if (el.wsStatusBar) el.wsStatusBar.style.display = "none";
+    }
+
     function connectWebSocket() {
       if (wsReconnectTimer) {
         clearTimeout(wsReconnectTimer);
@@ -676,17 +689,31 @@
         wsSocket = null;
       }
       setWsStatus("连接中");
+      showWsBar("连接中…");
       const socket = new WebSocket(wsUrl());
       wsSocket = socket;
       socket.onopen = () => {
         wsConnected = true;
+        wsRetryCount = 0;
         setWsStatus("已连接");
+        hideWsBar();
+        try {
+          socket.send(JSON.stringify({ action: "resync" }));
+        } catch (_) {}
       };
       socket.onclose = () => {
         wsConnected = false;
-        setWsStatus("断开");
         wsSocket = null;
-        wsReconnectTimer = setTimeout(connectWebSocket, 2500);
+        if (wsRetryCount < WS_MAX_RETRIES) {
+          wsRetryCount++;
+          const delay = Math.min(1000 * Math.pow(2, wsRetryCount - 1), 16000);
+          setWsStatus("断开");
+          showWsBar("已断开，正在重连…（第 " + wsRetryCount + " 次）");
+          wsReconnectTimer = setTimeout(connectWebSocket, delay);
+        } else {
+          setWsStatus("重连失败");
+          showWsBar("连接失败，请刷新页面重试");
+        }
       };
       socket.onerror = () => setWsStatus("错误");
       socket.onmessage = (ev) => {
@@ -1095,14 +1122,6 @@
       }
     }
 
-    async function uploadToQiniu(file) {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("session_id", sessionId);
-      const res = await fetch(API_UPLOAD, { method: "POST", headers: { "X-Session-Id": sessionId }, body: fd });
-      return res.json();
-    }
-
     function syncHistoryFromServer(history) {
       if (!history?.length) return;
       subtitles.length = 0;
@@ -1140,7 +1159,10 @@
             const data = JSON.parse(xhr.responseText);
             if (xhr.status >= 200 && xhr.status < 300) resolve(data);
             else reject(new Error(data.error || "upload failed"));
-          } catch (err) { reject(err); }
+          } catch (err) {
+            if (xhr.status === 413) reject(new Error("文件过大，请减小文件大小或提高 DATA_UPLOAD_MAX_MB"));
+            else reject(new Error("服务器返回错误 (HTTP " + xhr.status + ")"));
+          }
         };
         xhr.onerror = () => reject(new Error("network error"));
         xhr.send(formData);
@@ -1168,14 +1190,12 @@
         return;
       }
 
-      if (fromWs || !wsConnected) {
-        if (data.corrections?.length) applyCorrections(data.corrections);
-        if (data.subtitle) {
-          const { source, target, is_partial, start_sec, end_sec, speaker } = data.subtitle;
-          addSubtitle(source, target, is_partial, { start_sec, end_sec, speaker });
-          if (target && !is_partial) await playTts(target);
-          scheduleAutoSave();
-        }
+      if (data.corrections?.length) applyCorrections(data.corrections);
+      if (data.subtitle) {
+        const { source, target, is_partial, start_sec, end_sec, speaker } = data.subtitle;
+        addSubtitle(source, target, is_partial, { start_sec, end_sec, speaker });
+        if (target && !is_partial) await playTts(target);
+        scheduleAutoSave();
       }
     }
 
@@ -1217,10 +1237,6 @@
         sessionId = data.session_id;
         localStorage.setItem("interpreter_session", sessionId);
         el.sessionLabel.textContent = "会话 " + sessionId.slice(0, 8);
-      }
-      if (data.qiniu?.url) {
-        el.qiniuLink.hidden = false;
-        el.qiniuLink.innerHTML = '云端文件：<a href="' + data.qiniu.url + '" target="_blank" rel="noopener">' + data.qiniu.url + '</a>';
       }
       if (data.video) {
         setStatus(`音频已提取 · ${data.video.duration_sec}s · ${data.video.format.toUpperCase()}`, "live");
@@ -1322,50 +1338,21 @@
         return processVideoFile(file);
       }
       el.btnMic.disabled = true;
-      const useServer = el.chkBgm.checked;
+      el.btnVideoStop.disabled = false;
+      videoStreamAborted = false;
 
       try {
-        if (useServer) {
-          setStatus("服务端解析音轨 + BGM 人声分离: " + file.name, "live");
-          await ingestMediaFile(file);
-          setStatus("流式同传识别中…", "live");
-          await streamProcessedFile();
-          setStatus("文件同传完成" + (el.chkBgm.checked ? "（已抑制 BGM）" : ""));
-        } else {
-          setStatus("浏览器流式解析: " + file.name, "live");
-          const up = await uploadToQiniu(file);
-          if (up.qiniu?.url) {
-            el.qiniuLink.hidden = false;
-            el.qiniuLink.innerHTML = '云端文件：<a href="' + up.qiniu.url + '" target="_blank" rel="noopener">' + up.qiniu.url + '</a>';
-          }
-          const url = URL.createObjectURL(file);
-          const audio = new Audio(url);
-          await new Promise((res, rej) => { audio.onloadedmetadata = res; audio.onerror = rej; });
-          const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-          const stream = audio.captureStream?.() || audio.mozCaptureStream?.();
-          if (!stream) throw new Error("请使用 Chrome/Edge 进行文件同传");
-          const rec = new MediaRecorder(stream, { mimeType: mime });
-          rec.ondataavailable = async (ev) => {
-            if (!ev.data.size) return;
-            await handleResponse(await sendChunk(ev.data, "webm"));
-          };
-          rec.start(CHUNK_INTERVAL_MS);
-          audio.play();
-          await new Promise((res) => {
-            audio.onended = async () => {
-              rec.stop();
-              await new Promise((r) => (rec.onstop = r));
-              await handleResponse(await sendChunk(new Blob(), "webm", true));
-              URL.revokeObjectURL(url);
-              res();
-            };
-          });
-          setStatus("文件同传完成");
-        }
+        setStatus("服务端解析音轨: " + file.name, "live");
+        await ingestMediaFile(file);
+        setStatus("流式同传识别中…", "live");
+        await streamProcessedFile();
+        setStatus("文件同传完成" + (el.chkBgm.checked ? "（已抑制 BGM）" : ""));
+        scheduleAutoSave();
       } catch (e) {
         setStatus("文件处理失败: " + e.message, "error");
       } finally {
         el.btnMic.disabled = false;
+        el.btnVideoStop.disabled = true;
       }
     }
 
@@ -1434,7 +1421,7 @@
     el.btnClear.addEventListener("click", async () => {
       subtitles.length = 0;
       renderSubtitles();
-      el.qiniuLink.hidden = true;
+
       await fetch(API_RESET, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
@@ -1489,6 +1476,21 @@
     }
 
     el.btnDemo.addEventListener("click", runDemoMode);
+    el.btnResetSession.addEventListener("click", async () => {
+      subtitles.length = 0;
+      renderSubtitles();
+
+      qualitySamples = [];
+      if (wsConnected && wsSocket?.readyState === WebSocket.OPEN) {
+        wsSocket.send(JSON.stringify({ action: "reset", session_id: sessionId }));
+      }
+      await fetch(API_RESET, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      setStatus("会话已重置");
+    });
     el.btnPresent.addEventListener("click", () => {
       presentMode = !presentMode;
       el.presentOverlay.classList.toggle("show", presentMode);
@@ -1601,7 +1603,6 @@
 
     fetch("/api/health/").then((r) => r.json()).then((h) => {
       if (h.chunk_duration_ms) el.chunkMs.textContent = String(h.chunk_duration_ms);
-      el.qiniuPill.querySelector("strong").textContent = h.qiniu_configured ? "已接入" : "未配置";
       const parts = [];
       if (h.llm_configured) parts.push("LLM 就绪");
       else parts.push("请配置 LLM_API_KEY");

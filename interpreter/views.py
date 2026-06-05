@@ -32,7 +32,7 @@ from .utils.subtitle_export import export_subtitles
 from .utils.video_extract import extract_audio_from_media, is_supported_media
 from .utils.correction import apply_session_correction, history_payload
 from .utils.pipeline import process_audio_segment
-from .utils.qiniu_storage import is_qiniu_configured, upload_bytes
+from .utils.qiniu_storage import is_qiniu_configured
 from .utils.ws_events import push_chunk_result, push_session_event
 from .utils.stream import (
     cleanup_stale_sessions,
@@ -303,6 +303,15 @@ def api_video_ingest(request):
       - file: 音视频文件
       - separate_bgm: 1 启用人声分离（默认视频自动开启）
     """
+    try:
+        return _api_video_ingest_inner(request)
+    except Exception as e:
+        import logging, traceback
+        logging.getLogger(__name__).error("video ingest failed: %s\n%s", e, traceback.format_exc())
+        return JsonResponse({"error": f"video ingest failed: {e}"}, status=400)
+
+
+def _api_video_ingest_inner(request):
     session_id = _session_id(request)
     session = get_or_create_session(session_id)
 
@@ -341,9 +350,10 @@ def api_video_ingest(request):
         session.speaker_tracker.reset()
         bgm_info["extract"] = extract_meta
     except Exception as e:
+        import logging, traceback
+        logging.getLogger(__name__).error("media process failed: %s\n%s", e, traceback.format_exc())
         return JsonResponse({"error": f"media process failed: {e}"}, status=400)
 
-    qiniu_result = upload_bytes(raw, name, media_file.content_type or "application/octet-stream")
     save_session(session)
 
     return JsonResponse(
@@ -354,7 +364,6 @@ def api_video_ingest(request):
             "bgm": bgm_info,
             "wav_size": len(wav_bytes),
             "pcm_duration_sec": round(len(pcm) / (sample_rate * 2), 2),
-            "qiniu": qiniu_result,
             "ready": True,
             "message": "视频音频提取完成，已进入流式识别队列",
         }
@@ -364,7 +373,7 @@ def api_video_ingest(request):
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_upload_file(request):
-    """上传完整音视频文件：可选存七牛云，并返回云端 URL。"""
+    """上传完整音视频文件。"""
     too_large = _check_upload_size(request)
     if too_large:
         return too_large
@@ -376,16 +385,12 @@ def api_upload_file(request):
 
     raw = audio_file.read()
     name = audio_file.name or "upload.bin"
-    content_type = audio_file.content_type or "application/octet-stream"
 
-    qiniu_result = upload_bytes(raw, name, content_type)
     return JsonResponse(
         {
             "session_id": session_id,
             "filename": name,
             "size": len(raw),
-            "qiniu": qiniu_result,
-            "qiniu_enabled": is_qiniu_configured(),
         }
     )
 
@@ -513,8 +518,26 @@ def api_correct(request):
 
 @require_GET
 def api_demo_script(request):
-    """返回内置样例字幕脚本。"""
-    return JsonResponse(load_demo_script())
+    """返回内置样例字幕脚本；Whisper 未就绪时降级为 mock 文本流。"""
+    from .utils.asr import warm_up_whisper
+
+    whisper_ready = warm_up_whisper()
+    script = load_demo_script()
+    if not whisper_ready:
+        script = {
+            "title": "演示（Mock 模式）",
+            "lines": [
+                {"source": "Hello, welcome to the demo.", "target": "你好，欢迎来到演示。", "delay_ms": 1500},
+                {"source": "This is a real-time interpreter.", "target": "这是一个实时同传系统。", "delay_ms": 1500},
+                {"source": "It uses Whisper for speech recognition.", "target": "它使用 Whisper 进行语音识别。", "delay_ms": 1500},
+                {"source": "And a large language model for translation.", "target": "并使用大语言模型进行翻译。", "delay_ms": 1500},
+                {"source": "Thank you for watching.", "target": "感谢观看。", "delay_ms": 1500},
+            ],
+            "whisper_ready": False,
+        }
+    else:
+        script["whisper_ready"] = True
+    return JsonResponse(script)
 
 
 @csrf_exempt

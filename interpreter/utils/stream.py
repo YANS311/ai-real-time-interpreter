@@ -181,6 +181,19 @@ class AudioStreamSession:
         """推进已处理时长（用于字幕时间轴）。"""
         self.processed_duration_sec += len(segment) / (self.sample_rate * 2)
 
+    def reset_buffer(self) -> None:
+        """清空音频缓冲与历史，保留会话配置（glossary / ppt_context）。"""
+        self.pcm_buffer.clear()
+        self.processed_file_pcm = b""
+        self.processed_read_offset = 0
+        self.total_pcm_bytes = 0
+        self.processed_duration_sec = 0.0
+        self.paused = False
+        self.history.clear()
+        self.bgm_info = {}
+        self.speaker_tracker.reset()
+        self.touch()
+
 
 def get_or_create_session(session_id: str) -> AudioStreamSession:
     if redis_sessions_enabled():

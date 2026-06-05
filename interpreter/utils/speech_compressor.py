@@ -1,5 +1,5 @@
 """
-口语压缩：ASR 输出规整后再送翻译，去除填充词与重复片段。
+口语压缩：纯正则去除填充词与重复片段（无 LLM 调用，零延迟）。
 """
 from __future__ import annotations
 
@@ -9,94 +9,44 @@ from typing import Any
 
 from django.conf import settings
 
-from .circuit_breaker import get_llm_breaker
-from .llm_client import call_llm
-
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """你是一个口语文本规整器。去除填充词（um, uh, you know, like, I mean, sort of, 嗯, 啊 等），合并重复片段，优化断句，输出书面化英文。保持原意。
-
-只输出规整后的文本，不要解释，不要 markdown。"""
-
-_FILLER_RE = re.compile(
-    r"\b(um+|uh+|er+|ah+|like|you know|i mean|sort of|kind of)\b",
+# 英文填充词
+_EN_FILLERS = re.compile(
+    r"\b(um+|uh+|er+|ah+|like|you know|i mean|sort of|kind of|basically|actually|right)\b",
     re.IGNORECASE,
 )
-
-
-def _should_skip(raw_text: str, source_lang: str) -> str | None:
-    text = (raw_text or "").strip()
-    if not text:
-        return "empty"
-    if not getattr(settings, "SPEECH_COMPRESSOR_ENABLED", True):
-        return "disabled"
-    min_chars = getattr(settings, "SPEECH_COMPRESSOR_MIN_CHARS", 12)
-    if len(text) < min_chars:
-        return "too_short"
-    if source_lang not in ("en", "auto"):
-        return "unsupported_lang"
-    if not settings.LLM_API_KEY:
-        return "no_llm"
-    if get_llm_breaker().is_open():
-        return "circuit_open"
-    cleaned = _FILLER_RE.sub("", text).strip()
-    if cleaned and len(cleaned) >= len(text) - 2:
-        return "already_clean"
-    return None
-
-
-def _call_llm_text(messages: list[dict]) -> str:
-    return call_llm(messages, temperature=0.2, json_mode=False)
+# 中文填充词
+_ZH_FILLERS = re.compile(r"[嗯啊呃那个就是然后所以说不过还是其实]")
+# 重复词（连续重复 2+ 次同一词）
+_REPEAT_WORD = re.compile(r"\b(\w+)(\s+\1){1,}\b", re.IGNORECASE)
+# 多余空格
+_MULTI_SPACE = re.compile(r" {2,}")
 
 
 def compress_speech(raw_text: str, source_lang: str = "en") -> dict[str, Any]:
     """
-    规整 ASR 口语文本。
+    纯正则压缩：去除填充词、合并重复片段。
 
     返回:
-      text: 规整后文本（失败或未启用时等于原文）
-      compressed: 是否实际做了 LLM 规整
+      text: 压缩后文本
+      compressed: 是否做了压缩
       skipped: 是否跳过
       reason: 跳过原因
     """
     raw_text = (raw_text or "").strip()
-    skip_reason = _should_skip(raw_text, source_lang)
-    if skip_reason:
-        return {
-            "text": raw_text,
-            "compressed": False,
-            "skipped": True,
-            "reason": skip_reason,
-        }
+    if not raw_text:
+        return {"text": "", "compressed": False, "skipped": True, "reason": "empty"}
+    if not getattr(settings, "SPEECH_COMPRESSOR_ENABLED", True):
+        return {"text": raw_text, "compressed": False, "skipped": True, "reason": "disabled"}
 
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": raw_text},
-    ]
-    try:
-        compressed = _call_llm_text(messages)
-        compressed = compressed.strip().strip('"').strip("'")
-        if not compressed or len(compressed) < 2:
-            return {
-                "text": raw_text,
-                "compressed": False,
-                "skipped": True,
-                "reason": "empty_result",
-            }
-        get_llm_breaker().record_success()
-        return {
-            "text": compressed,
-            "compressed": compressed != raw_text,
-            "skipped": False,
-            "reason": "",
-        }
-    except Exception as e:
-        get_llm_breaker().record_failure()
-        logger.warning("Speech compression failed: %s", e)
-        return {
-            "text": raw_text,
-            "compressed": False,
-            "skipped": True,
-            "reason": "error",
-            "error": str(e),
-        }
+    text = raw_text
+    text = _EN_FILLERS.sub("", text)
+    text = _ZH_FILLERS.sub("", text)
+    text = _REPEAT_WORD.sub(r"\1", text)
+    text = _MULTI_SPACE.sub(" ", text).strip()
+
+    compressed = text != raw_text
+    if not text or len(text) < 2:
+        return {"text": raw_text, "compressed": False, "skipped": True, "reason": "empty_result"}
+    return {"text": text, "compressed": compressed, "skipped": False, "reason": ""}

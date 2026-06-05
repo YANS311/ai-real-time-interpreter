@@ -15,19 +15,35 @@ from .stream import pcm_to_wav_bytes
 logger = logging.getLogger(__name__)
 
 _model = None
+_model_load_attempted = False
 _model_lock = threading.Lock()
 
 
 def _get_model():
     """懒加载 Whisper 模型（线程安全）。"""
-    global _model
+    global _model, _model_load_attempted
     if _model is not None:
         return _model
     with _model_lock:
         if _model is not None:
             return _model
         from faster_whisper import WhisperModel
+        from pathlib import Path
 
+        model_path = getattr(settings, "WHISPER_MODEL_PATH", "")
+        if model_path and Path(model_path).is_dir():
+            logger.info("Loading Whisper model from local path: %s", model_path)
+            _model = WhisperModel(
+                model_path,
+                device=settings.WHISPER_DEVICE,
+                compute_type=settings.WHISPER_COMPUTE_TYPE,
+            )
+            _model_load_attempted = True
+            return _model
+
+        if _model_load_attempted:
+            return None
+        _model_load_attempted = True
         logger.info(
             "Loading Whisper model=%s device=%s",
             settings.WHISPER_MODEL,
@@ -43,10 +59,14 @@ def _get_model():
 
 def warm_up_whisper() -> bool:
     """预加载 Whisper 模型，降低首包延迟。"""
+    if _model is not None:
+        return True
     try:
         _get_model()
-        logger.info("Whisper model warmed up")
-        return True
+        if _model is not None:
+            logger.info("Whisper model warmed up")
+            return True
+        return False
     except Exception as e:
         logger.warning("Whisper warm-up failed: %s", e)
         return False
@@ -73,6 +93,8 @@ def transcribe_pcm(
 
     wav = pcm_to_wav_bytes(pcm_bytes, sample_rate)
     model = _get_model()
+    if model is None:
+        return {"text": "", "language": "", "is_partial": True, "segments": [], "error": "whisper model not available"}
 
     segments_iter, info = model.transcribe(
         io.BytesIO(wav),

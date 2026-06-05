@@ -34,12 +34,16 @@ def call_llm(
     *,
     temperature: float = 0.3,
     json_mode: bool = False,
+    max_tokens: int = 512,
 ) -> str:
     """调用 chat/completions，返回 assistant 文本。"""
     if not settings.LLM_API_KEY:
         return ""
 
-    url = f"{settings.LLM_API_BASE.rstrip('/')}/chat/completions"
+    base = settings.LLM_API_BASE.strip().rstrip("/")
+    if not base.startswith(("http://", "https://")):
+        base = "https://" + base
+    url = f"{base}/chat/completions"
     headers = {
         "Authorization": f"Bearer {settings.LLM_API_KEY}",
         "Content-Type": "application/json",
@@ -48,6 +52,7 @@ def call_llm(
         "model": settings.LLM_MODEL,
         "messages": messages,
         "temperature": temperature,
+        "max_tokens": max_tokens,
     }
     if json_mode:
         payload["response_format"] = {"type": "json_object"}

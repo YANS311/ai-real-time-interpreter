@@ -102,6 +102,7 @@ def process_audio_segment(
     started = time.perf_counter()
 
     def _work() -> dict[str, Any]:
+        nonlocal segment_duration_sec
         asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang)
         source_text = (asr.get("text") or "").strip()
 
