@@ -14,6 +14,9 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .utils.audio_process import is_spleeter_available
+from .utils.demo import load_demo_script
+from .utils.export_bundle import build_export_bundle
+from .utils.glossary import load_default_glossary, merge_glossary, parse_client_glossary
 from .utils.bgm import is_video_file, prepare_media_for_interpretation
 from .utils.circuit_breaker import get_asr_breaker, get_llm_breaker
 from .utils.history_store import (
@@ -60,6 +63,18 @@ def _decode_audio(raw: bytes, fmt: str, sample_rate: int) -> tuple[bytes, int]:
     return raw, sample_rate
 
 
+def _sync_session_glossary(session, request) -> None:
+    """从请求更新会话术语表。"""
+    raw = request.POST.get("glossary") or request.headers.get("X-Glossary")
+    if raw:
+        session.glossary = merge_glossary(
+            load_default_glossary(),
+            parse_client_glossary(raw),
+        )
+    elif not session.glossary:
+        session.glossary = load_default_glossary()
+
+
 def _empty_chunk_response(session_id: str, bgm_info: dict | None = None) -> dict:
     resp = {
         "session_id": session_id,
@@ -102,6 +117,7 @@ def _process_segment(
         segment_start_sec=start_sec,
         segment_duration_sec=seg_dur,
         bgm_info=session.bgm_info or None,
+        glossary=session.glossary or None,
     )
     session.advance_duration(segment)
     result["session_id"] = session.session_id
@@ -119,6 +135,7 @@ def api_audio_chunk(request):
     cleanup_stale_sessions(settings.SESSION_TTL)
     session_id = _session_id(request)
     session = get_or_create_session(session_id)
+    _sync_session_glossary(session, request)
     source_lang = request.POST.get("source_lang") or "auto"
     flush = request.POST.get("flush") == "1"
     pull_processed = request.POST.get("pull_processed") == "1"
@@ -267,6 +284,41 @@ def api_upload_file(request):
             "qiniu": qiniu_result,
             "qiniu_enabled": is_qiniu_configured(),
         }
+    )
+
+
+@require_GET
+def api_demo_script(request):
+    """演示模式预置字幕脚本。"""
+    return JsonResponse(load_demo_script())
+
+
+@csrf_exempt
+@require_http_methods(["GET", "POST"])
+def api_export_bundle(request):
+    """打包导出 SRT + TXT + JSON。"""
+    session_id = _session_id(request)
+    session = get_or_create_session(session_id)
+    items = session.history
+    if request.method == "POST" and request.body:
+        try:
+            body = json.loads(request.body.decode("utf-8"))
+            if body.get("items"):
+                items = body["items"]
+        except json.JSONDecodeError:
+            pass
+    if not items:
+        return JsonResponse({"error": "no subtitles"}, status=404)
+    meta = {
+        "session_id": session_id,
+        "glossary": session.glossary,
+        "bgm": session.bgm_info,
+    }
+    data = build_export_bundle(items, meta=meta)
+    return HttpResponse(
+        data,
+        content_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="subtitles_bundle.zip"'},
     )
 
 

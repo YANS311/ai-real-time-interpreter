@@ -223,6 +223,25 @@
     .history-actions { display: flex; gap: 0.5rem; padding: 0.75rem; border-top: 1px solid var(--border); }
     .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 99; }
     .overlay.show { display: block; }
+    .present-overlay {
+      display: none; position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.75); align-items: flex-end; justify-content: center;
+      padding: 8vh 5vw 10vh; pointer-events: none;
+    }
+    .present-overlay.show { display: flex; }
+    .present-text {
+      max-width: 92vw; text-align: center; color: #fff;
+      font-size: clamp(1.4rem, 4.5vw, 2.4rem); font-weight: 700;
+      line-height: 1.45; text-shadow: 0 2px 16px rgba(0,0,0,0.8);
+      background: rgba(0,0,0,0.45); padding: 1rem 1.5rem; border-radius: 12px;
+      backdrop-filter: blur(4px);
+    }
+    .present-sub { display: block; margin-top: 0.6rem; font-size: 0.55em; font-weight: 400; color: #cbd5e1; }
+    .glossary-box {
+      width: 100%; min-height: 64px; margin-top: 0.5rem;
+      background: var(--card); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 0.6rem; font-size: 0.82rem; resize: vertical;
+    }
     @media (max-width: 600px) {
       header h1 { font-size: 1rem; }
       .controls button, .controls .file-label, .lang-select { width: 100%; justify-content: center; }
@@ -285,6 +304,9 @@
       <button id="btnExportSrt" class="btn-secondary">导出 SRT</button>
       <button id="btnHistory" class="btn-secondary">历史记录</button>
       <button id="btnCopyAll" class="btn-secondary">复制全文</button>
+      <button id="btnExportBundle" class="btn-secondary">导出 ZIP</button>
+      <button id="btnDemo" class="btn-secondary">一键演示</button>
+      <button id="btnPresent" class="btn-secondary">演讲模式</button>
     </div>
 
     <div class="status-bar">
@@ -315,7 +337,18 @@
         </select>
       </label>
     </div>
+    <div class="options" style="margin-top:0.5rem; flex-direction:column; align-items:stretch">
+      <label>术语表 / 热词 <span style="color:var(--muted)">（格式：GPT=生成式预训练模型,API=接口）</span></label>
+      <textarea id="glossaryInput" class="glossary-box" placeholder="Whisper=语音识别,LLM=大语言模型"></textarea>
+    </div>
   </main>
+
+  <div class="present-overlay" id="presentOverlay">
+    <div class="present-text">
+      <span id="presentTarget">演讲模式 · 等待字幕</span>
+      <span class="present-sub" id="presentSource"></span>
+    </div>
+  </div>
 
   <div class="overlay" id="historyOverlay"></div>
   <aside class="history-drawer" id="historyDrawer">
@@ -338,10 +371,15 @@
     const API_TTS = "/api/tts/";
     const API_HISTORY = "/api/history/";
     const API_HISTORY_SAVE = "/api/history/save/";
+    const API_DEMO = "/api/demo/script/";
+    const API_EXPORT_BUNDLE = "/api/export/bundle/";
     const LS_HISTORY_KEY = "interpreter_local_history";
+    const LS_GLOSSARY_KEY = "interpreter_glossary";
     let CHUNK_INTERVAL_MS = 300;
     let qualitySamples = [];
     let saveHistoryTimer = null;
+    let demoRunning = false;
+    let presentMode = false;
 
     let sessionId = localStorage.getItem("interpreter_session") || crypto.randomUUID();
     localStorage.setItem("interpreter_session", sessionId);
@@ -393,10 +431,34 @@
       historyDrawer: document.getElementById("historyDrawer"),
       historyOverlay: document.getElementById("historyOverlay"),
       historyList: document.getElementById("historyList"),
+      btnDemo: document.getElementById("btnDemo"),
+      btnPresent: document.getElementById("btnPresent"),
+      btnExportBundle: document.getElementById("btnExportBundle"),
+      glossaryInput: document.getElementById("glossaryInput"),
+      presentOverlay: document.getElementById("presentOverlay"),
+      presentTarget: document.getElementById("presentTarget"),
+      presentSource: document.getElementById("presentSource"),
     };
 
     el.sessionLabel.textContent = "会话 " + sessionId.slice(0, 8);
     el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
+    el.glossaryInput.value = localStorage.getItem(LS_GLOSSARY_KEY) || "";
+    el.glossaryInput.addEventListener("input", () => {
+      localStorage.setItem(LS_GLOSSARY_KEY, el.glossaryInput.value.trim());
+    });
+
+    function getGlossaryPayload() {
+      const text = (el.glossaryInput.value || "").trim();
+      return text || "";
+    }
+
+    function updatePresentOverlay() {
+      if (!presentMode) return;
+      const last = [...subtitles].reverse().find((s) => !s.partial && (s.target || s.source));
+      if (!last) return;
+      el.presentTarget.textContent = last.target || last.source || "";
+      el.presentSource.textContent = last.source && last.target ? last.source : "";
+    }
 
     function setStatus(text, mode = "idle") {
       el.statusText.textContent = text;
@@ -572,6 +634,7 @@
         subtitles.push(row);
       }
       renderSubtitles();
+      updatePresentOverlay();
     }
 
     function setBgmInfo(bgm) {
@@ -607,6 +670,8 @@
       fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
       fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
       fd.append("separation_method", "auto");
+      const gloss = getGlossaryPayload();
+      if (gloss) fd.append("glossary", gloss);
       if (flush) fd.append("flush", "1");
 
       pendingRequests++;
@@ -725,6 +790,8 @@
       fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
       fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
       fd.append("separation_method", "auto");
+      const gloss = getGlossaryPayload();
+      if (gloss) fd.append("glossary", gloss);
       setProgress(1);
       const data = await uploadWithProgress(API_VIDEO_INGEST, fd);
       if (data.session_id) {
@@ -912,6 +979,73 @@
       CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 800 : 300;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
       setStatus("已切换为" + (CHUNK_INTERVAL_MS === 300 ? "低延迟" : "高准确率") + "模式");
+    });
+    async function runDemoMode() {
+      if (demoRunning) return;
+      demoRunning = true;
+      el.btnDemo.disabled = true;
+      subtitles.length = 0;
+      renderSubtitles();
+      setStatus("演示模式播放中…", "live");
+      try {
+        const res = await fetch(API_DEMO);
+        const script = await res.json();
+        for (const line of script.lines || []) {
+          addSubtitle(line.source, line.target, false, {
+            start_sec: line.start_sec,
+            end_sec: line.end_sec,
+          });
+          if (line.corrected) {
+            const i = subtitles.length - 1;
+            if (i >= 0) subtitles[i].corrected = true;
+            renderSubtitles();
+          }
+          if (el.chkTts.checked && line.target) await playTts(line.target);
+          await new Promise((r) => setTimeout(r, line.delay_ms || 1200));
+        }
+        setStatus("演示完成 · " + (script.title || ""));
+        scheduleAutoSave();
+      } catch (e) {
+        setStatus("演示失败: " + e.message, "error");
+      } finally {
+        demoRunning = false;
+        el.btnDemo.disabled = false;
+      }
+    }
+
+    el.btnDemo.addEventListener("click", runDemoMode);
+    el.btnPresent.addEventListener("click", () => {
+      presentMode = !presentMode;
+      el.presentOverlay.classList.toggle("show", presentMode);
+      el.btnPresent.textContent = presentMode ? "退出演讲" : "演讲模式";
+      updatePresentOverlay();
+      setStatus(presentMode ? "演讲模式已开启（全屏大字幕）" : "已退出演讲模式");
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && presentMode) {
+        presentMode = false;
+        el.presentOverlay.classList.remove("show");
+        el.btnPresent.textContent = "演讲模式";
+      }
+    });
+    el.btnExportBundle.addEventListener("click", async () => {
+      if (!subtitles.length) { setStatus("暂无字幕", "warn"); return; }
+      const res = await fetch(API_EXPORT_BUNDLE, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-Id": sessionId,
+        },
+        body: JSON.stringify({ items: subtitles }),
+      });
+      if (!res.ok) { setStatus("导出失败", "error"); return; }
+      const blob = await res.blob();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "subtitles_bundle.zip";
+      a.click();
+      URL.revokeObjectURL(a.href);
+      setStatus("已导出 ZIP（SRT+TXT+JSON）");
     });
     el.btnHistory.addEventListener("click", openHistoryDrawer);
     el.btnCloseHistory.addEventListener("click", closeHistoryDrawer);
