@@ -165,6 +165,7 @@
       margin: 0 auto 0.85rem;
       max-width: 92%;
       padding: 0.85rem 1.1rem;
+      cursor: pointer;
       border-radius: 10px;
       background: rgba(0, 0, 0, var(--sub-bg-opacity, 0.55));
       border: 1px solid rgba(255,255,255,0.08);
@@ -335,6 +336,7 @@
       </select>
       <button id="btnClear" class="btn-secondary">清空字幕</button>
       <button id="btnExportSrt" class="btn-secondary">导出 SRT</button>
+      <button id="btnExportVtt" class="btn-secondary">导出 VTT</button>
       <button id="btnHistory" class="btn-secondary">历史记录</button>
       <button id="btnCopyAll" class="btn-secondary">复制全文</button>
       <button id="btnExportBundle" class="btn-secondary">导出 ZIP</button>
@@ -466,6 +468,7 @@
       panelVideo: document.getElementById("panelVideo"),
       btnClear: document.getElementById("btnClear"),
       btnExportSrt: document.getElementById("btnExportSrt"),
+      btnExportVtt: document.getElementById("btnExportVtt"),
       chkBgm: document.getElementById("chkBgm"),
       chkDenoise: document.getElementById("chkDenoise"),
       chkBilingual: document.getElementById("chkBilingual"),
@@ -726,6 +729,13 @@
             `<div class="source">${spkTag}${escapeHtml(item.source || "")}</div>` +
             `<div class="target">${escapeHtml(item.target || "")}${badge}</div>`;
         }
+        div.title = "点击复制该行字幕";
+        div.addEventListener("click", async () => {
+          const text = (item.target || item.source || "").trim();
+          if (!text) return;
+          await navigator.clipboard.writeText(text);
+          setStatus("已复制字幕行");
+        });
         el.subtitleList.appendChild(div);
       });
       scrollToBottom();
@@ -1207,10 +1217,21 @@
       setStatus(presentMode ? "演讲模式已开启（全屏大字幕）" : "已退出演讲模式");
     });
     document.addEventListener("keydown", (e) => {
+      const tag = e.target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.key === "Escape" && presentMode) {
         presentMode = false;
         el.presentOverlay.classList.remove("show");
         el.btnPresent.textContent = "演讲模式";
+        return;
+      }
+      if (e.key === "d" || e.key === "D") { e.preventDefault(); el.btnDemo.click(); }
+      if (e.key === "p" || e.key === "P") { e.preventDefault(); el.btnPresent.click(); }
+      if (e.key === " ") {
+        if (inputMode === "video" && !el.btnVideoPause.disabled) {
+          e.preventDefault();
+          el.btnVideoPause.click();
+        }
       }
     });
     el.btnExportBundle.addEventListener("click", async () => {
@@ -1242,13 +1263,18 @@
       await navigator.clipboard.writeText(text);
       setStatus("已复制全文到剪贴板");
     });
-    el.btnExportSrt.addEventListener("click", async () => {
+    async function exportSubtitles(fmt, filename, label) {
       if (!subtitles.length) {
         setStatus("暂无字幕可导出", "warn");
         return;
       }
-      const res = await fetch(API_EXPORT + "?format=srt", {
-        headers: { "X-Session-Id": sessionId },
+      const res = await fetch(API_EXPORT + "?format=" + fmt, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Session-Id": sessionId,
+        },
+        body: JSON.stringify({ items: subtitles }),
       });
       if (!res.ok) {
         setStatus("导出失败", "error");
@@ -1257,11 +1283,13 @@
       const blob = await res.blob();
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);
-      a.download = "subtitles.srt";
+      a.download = filename;
       a.click();
       URL.revokeObjectURL(a.href);
-      setStatus("SRT 字幕已导出");
-    });
+      setStatus(label + " 已导出");
+    }
+    el.btnExportSrt.addEventListener("click", () => exportSubtitles("srt", "subtitles.srt", "SRT"));
+    el.btnExportVtt.addEventListener("click", () => exportSubtitles("vtt", "subtitles.vtt", "VTT"));
 
     fetch("/api/health/").then((r) => r.json()).then((h) => {
       if (h.chunk_duration_ms) el.chunkMs.textContent = String(h.chunk_duration_ms);
