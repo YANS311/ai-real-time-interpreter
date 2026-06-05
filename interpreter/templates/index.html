@@ -1148,6 +1148,12 @@
     }
 
     async function handleResponse(data, fromWs = false) {
+      if (data.error) {
+        setStatus(data.error, data.circuit ? "warn" : "error");
+      }
+      if (data.circuit?.asr?.open || data.circuit?.llm?.open) {
+        setStatus("服务熔断中（ASR/LLM），请稍后重试", "warn");
+      }
       if (data.bgm) setBgmInfo(data.bgm);
       if (data.quality) updateQualityMetrics(data.quality);
       if (data.progress) updatePlaybackUI(data.progress);
@@ -1369,7 +1375,13 @@
         document.querySelectorAll(".tab-btn").forEach((b) => b.classList.toggle("active", b === btn));
         el.panelMic.classList.toggle("active", inputMode === "mic");
         el.panelVideo.classList.toggle("active", inputMode === "video");
-        if (inputMode === "mic") stopMic();
+        if (inputMode === "mic") {
+          stopMic();
+          if (el.chkBgm?.checked) {
+            el.chkBgm.checked = false;
+            setStatus("已切换到麦克风：BGM 分离已自动关闭", "warn");
+          }
+        }
       });
     });
 

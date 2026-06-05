@@ -143,8 +143,19 @@ class AudioStreamSession:
             for h in self.history
             if (h.get("end_sec") or 0) <= target_sec + 0.05
         ]
+        self._sync_speaker_tracker_from_history()
         self.touch()
         return target_sec
+
+    def _sync_speaker_tracker_from_history(self) -> None:
+        """根据保留的字幕历史重建说话人分段状态（seek 后使用）。"""
+        self.speaker_tracker.reset()
+        for h in self.history:
+            speaker = h.get("speaker")
+            end_sec = h.get("end_sec")
+            if speaker and end_sec is not None:
+                self.speaker_tracker.current = speaker
+                self.speaker_tracker.last_speech_end_sec = float(end_sec)
 
     def playback_progress(self) -> dict:
         """视频/文件同传播放进度。"""

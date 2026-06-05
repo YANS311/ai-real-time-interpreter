@@ -98,6 +98,7 @@ chmod +x scripts/selftest.sh
 | `REDIS_SESSIONS_ENABLED` | Redis 会话存储，默认 `True` |
 | `CHANNELS_ENABLED` | WebSocket 开关，默认 `True` |
 | `SESSION_TTL` | 会话过期秒数，默认 `3600` |
+| `DATA_UPLOAD_MAX_MB` | 视频/文件上传上限，默认 `200` |
 | `QINIU_*` | 七牛云存储（可选） |
 
 GPU 示例：
@@ -138,6 +139,14 @@ Compose 启动 **Redis 7** + **interpreter**（daphne），自动注入 `REDIS_U
 
 截图放 `docs/screenshots/`（如 `main.png`、`status.png`）。
 
+## 近期优化
+
+- **LLM 连接复用**：共享 `httpx` 客户端，降低翻译/压缩/修正延迟
+- **视频 seek**：跳转后同步截断字幕，并重建说话人 A/B 分段状态
+- **上传限制**：默认最大 200MB，超限返回明确错误（可调 `DATA_UPLOAD_MAX_MB`）
+- **Demo 体验**：切到麦克风 tab 自动关闭 BGM；熔断状态在前端状态栏提示
+- **麦克风路径**：后端强制跳过 Spleeter，避免实时卡顿
+
 ## 目录结构
 
 ```
@@ -151,7 +160,7 @@ ai-real-time-interpreter/
 │   └── utils/
 │       ├── asr.py           # faster-whisper
 │       ├── speech_compressor.py
-│       ├── translate.py / correction.py
+│       ├── translate.py / correction.py / llm_client.py
 │       ├── ppt_context.py / glossary.py
 │       ├── pipeline.py      # ASR → 压缩 → 翻译
 │       ├── redis_client.py / session_store.py
@@ -191,6 +200,8 @@ ai-real-time-interpreter/
 - **麦克风卡顿** — 勿开 BGM 分离；可关口语压缩与 TTS 降延迟。
 - **WS 未连接** — 使用 `daphne core.asgi:application` 启动。
 - **Redis 未连接** — 本地可留空 `REDIS_URL`；Docker 用 `docker compose up`。
+- **视频上传失败** — 检查文件小于 `DATA_UPLOAD_MAX_MB`（默认 200MB）。
+- **视频跳转后字幕不准** — 已随 seek 同步截断；若仍异常可点「清空字幕」重来。
 
 ## 开发
 

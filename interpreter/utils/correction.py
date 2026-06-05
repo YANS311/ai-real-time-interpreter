@@ -6,10 +6,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-import httpx
 from django.conf import settings
 
 from .glossary import format_glossary_prompt, merge_glossary, load_default_glossary
+from .llm_client import call_llm
 from .ppt_context import format_ppt_prompt
 
 logger = logging.getLogger(__name__)
@@ -24,21 +24,7 @@ SYSTEM_PROMPT = """你是专业同声传译审校员。用户会提供：
 
 
 def _call_llm_text(messages: list[dict]) -> str:
-    url = f"{settings.LLM_API_BASE.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.LLM_MODEL,
-        "messages": messages,
-        "temperature": 0.2,
-    }
-    with httpx.Client(timeout=45.0) as client:
-        resp = client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return (data["choices"][0]["message"]["content"] or "").strip()
+    return call_llm(messages, temperature=0.2, json_mode=False)
 
 
 def build_context_sources(history: list[dict], index: int, window: int = 2) -> list[str]:

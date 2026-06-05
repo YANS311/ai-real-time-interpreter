@@ -8,10 +8,10 @@ import logging
 import re
 from typing import Any
 
-import httpx
 from django.conf import settings
 
 from .glossary import format_glossary_prompt, merge_glossary, load_default_glossary
+from .llm_client import call_llm
 from .ppt_context import format_ppt_prompt
 
 logger = logging.getLogger(__name__)
@@ -46,26 +46,7 @@ SYSTEM_PROMPT = """你是专业同声传译助手。用户会提供：
 
 def _call_llm(messages: list[dict]) -> str:
     """调用 OpenAI 兼容 API。"""
-    if not settings.LLM_API_KEY:
-        return ""
-
-    url = f"{settings.LLM_API_BASE.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.LLM_MODEL,
-        "messages": messages,
-        "temperature": 0.3,
-        "response_format": {"type": "json_object"},
-    }
-
-    with httpx.Client(timeout=60.0) as client:
-        resp = client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+    return call_llm(messages, temperature=0.3, json_mode=True)
 
 
 def _parse_llm_json(raw: str) -> dict:

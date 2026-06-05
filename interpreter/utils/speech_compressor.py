@@ -7,10 +7,10 @@ import logging
 import re
 from typing import Any
 
-import httpx
 from django.conf import settings
 
 from .circuit_breaker import get_llm_breaker
+from .llm_client import call_llm
 
 logger = logging.getLogger(__name__)
 
@@ -46,21 +46,7 @@ def _should_skip(raw_text: str, source_lang: str) -> str | None:
 
 
 def _call_llm_text(messages: list[dict]) -> str:
-    url = f"{settings.LLM_API_BASE.rstrip('/')}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {settings.LLM_API_KEY}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "model": settings.LLM_MODEL,
-        "messages": messages,
-        "temperature": 0.2,
-    }
-    with httpx.Client(timeout=30.0) as client:
-        resp = client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        return (data["choices"][0]["message"]["content"] or "").strip()
+    return call_llm(messages, temperature=0.2, json_mode=False)
 
 
 def compress_speech(raw_text: str, source_lang: str = "en") -> dict[str, Any]:

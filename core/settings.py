@@ -93,6 +93,11 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
+# 上传大小限制（视频 ingest），默认 200MB
+DATA_UPLOAD_MAX_MB = int(os.getenv("DATA_UPLOAD_MAX_MB", "200"))
+DATA_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MB * 1024 * 1024
+FILE_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
+
 # --- Interpreter service config (from .env) ---
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")

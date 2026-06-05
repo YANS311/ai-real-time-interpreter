@@ -116,6 +116,29 @@ def _sync_session_chunk_duration(session, request) -> None:
         session.chunk_duration_sec = 0.3
 
 
+def _upload_too_large_response() -> JsonResponse:
+    return JsonResponse(
+        {
+            "error": f"file too large (max {settings.DATA_UPLOAD_MAX_MB}MB)",
+            "max_upload_mb": settings.DATA_UPLOAD_MAX_MB,
+        },
+        status=413,
+    )
+
+
+def _check_upload_size(request) -> JsonResponse | None:
+    """在上传前检查 Content-Length，返回错误响应或 None。"""
+    raw_len = request.META.get("CONTENT_LENGTH")
+    if not raw_len:
+        return None
+    try:
+        if int(raw_len) > settings.DATA_UPLOAD_MAX_MEMORY_SIZE:
+            return _upload_too_large_response()
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
 def _empty_chunk_response(session_id: str, bgm_info: dict | None = None) -> dict:
     resp = {
         "session_id": session_id,
@@ -283,6 +306,10 @@ def api_video_ingest(request):
     session_id = _session_id(request)
     session = get_or_create_session(session_id)
 
+    too_large = _check_upload_size(request)
+    if too_large:
+        return too_large
+
     media_file = request.FILES.get("file") or request.FILES.get("audio")
     if not media_file:
         return JsonResponse({"error": "missing file"}, status=400)
@@ -338,6 +365,10 @@ def api_video_ingest(request):
 @require_http_methods(["POST"])
 def api_upload_file(request):
     """上传完整音视频文件：可选存七牛云，并返回云端 URL。"""
+    too_large = _check_upload_size(request)
+    if too_large:
+        return too_large
+
     session_id = _session_id(request)
     audio_file = request.FILES.get("file") or request.FILES.get("audio")
     if not audio_file:
@@ -749,6 +780,7 @@ def _system_status_payload() -> dict:
             "paused": paused,
         },
         "history_records": history_count,
+        "max_upload_mb": settings.DATA_UPLOAD_MAX_MB,
     }
 
 
