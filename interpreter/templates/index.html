@@ -157,24 +157,51 @@
       padding: 0.85rem 1rem;
       scroll-behavior: smooth;
       text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: var(--sub-justify, flex-start);
     }
     .subtitle-item {
       margin: 0 auto 0.85rem;
       max-width: 92%;
       padding: 0.85rem 1.1rem;
       border-radius: 10px;
-      background: rgba(0, 0, 0, 0.55);
+      background: rgba(0, 0, 0, var(--sub-bg-opacity, 0.55));
       border: 1px solid rgba(255,255,255,0.08);
       backdrop-filter: blur(6px);
       border-left: 3px solid var(--accent);
     }
+    .subtitle-item.speaker-a { border-left-color: #3b82f6; }
+    .subtitle-item.speaker-b { border-left-color: #a855f7; }
     .subtitle-item.partial { opacity: 0.72; border-left-color: var(--muted); }
     .subtitle-item.corrected {
       border-left-color: var(--correct);
       background: rgba(245, 158, 11, 0.08);
     }
     .subtitle-item .source { font-size: 0.78rem; color: var(--muted); margin-bottom: 0.3rem; }
-    .subtitle-item .target { font-size: 1.15rem; font-weight: 600; color: #f0f6ff; }
+    .subtitle-item .target { font-size: var(--sub-font-size, 1.15rem); font-weight: 600; color: var(--sub-color, #f0f6ff); }
+    .speaker-tag {
+      display: inline-block; font-size: 0.68rem; padding: 0.1rem 0.4rem;
+      border-radius: 4px; margin-right: 0.35rem; font-weight: 600;
+    }
+    .speaker-tag.a { background: rgba(59,130,246,0.25); color: #93c5fd; }
+    .speaker-tag.b { background: rgba(168,85,247,0.25); color: #d8b4fe; }
+    .playback-bar {
+      width: 100%; display: none; align-items: center; gap: 0.6rem;
+      margin-top: 0.5rem; font-size: 0.78rem; color: var(--muted);
+    }
+    .playback-bar.show { display: flex; }
+    .playback-bar input[type=range] { flex: 1; accent-color: var(--accent); }
+    .style-panel {
+      margin-top: 0.85rem; padding: 0.85rem; background: var(--card);
+      border: 1px solid var(--border); border-radius: 10px;
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 0.75rem; font-size: 0.82rem;
+    }
+    .style-panel label { display: flex; flex-direction: column; gap: 0.35rem; color: var(--muted); }
+    .style-panel input[type=range], .style-panel select, .style-panel input[type=color] {
+      width: 100%; accent-color: var(--accent);
+    }
     .subtitle-item.bilingual .target { font-size: 1.25rem; font-weight: 700; }
     .subtitle-item.bilingual .source {
       margin-top: 0.4rem; padding-top: 0.4rem;
@@ -254,7 +281,7 @@
   <header>
     <div>
       <h1>AI 同声传译助手</h1>
-      <p>Whisper 流式 ASR · 大模型翻译纠错 · Edge-TTS · 七牛云存储</p>
+      <p>Whisper 流式 ASR · 大模型翻译纠错 · Edge-TTS · <a href="/status/" style="color:var(--accent)">系统状态</a></p>
     </div>
     <div class="metrics">
       <span class="metric-pill">延迟 <strong id="latencyMs">--</strong> ms</span>
@@ -284,12 +311,18 @@
         <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/x-msvideo,video/*,audio/*" />
       </label>
       <button id="btnVideoStart" class="btn-primary" disabled>开始视频同传</button>
+      <button id="btnVideoPause" class="btn-secondary" disabled>暂停</button>
       <button id="btnVideoStop" class="btn-danger" disabled>停止</button>
       <div class="video-preview-wrap" id="videoPreviewWrap" hidden>
         <video id="videoPreview" controls playsinline></video>
       </div>
       <div class="progress-wrap" id="progressWrap">
         <div class="progress-bar" id="progressBar"></div>
+      </div>
+      <div class="playback-bar" id="playbackBar">
+        <span id="playbackTime">0:00 / 0:00</span>
+        <input type="range" id="playbackSeek" min="0" max="1000" value="0" step="1" />
+        <span id="playbackPct">0%</span>
       </div>
     </div>
 
@@ -329,6 +362,7 @@
       <label><input type="checkbox" id="chkBgm" checked /> BGM 人声分离（Spleeter/快速）</label>
       <label><input type="checkbox" id="chkDenoise" checked /> 环境降噪（风声/杂音）</label>
       <label><input type="checkbox" id="chkBilingual" checked /> 双语字幕（中文在上·原文在下）</label>
+      <label><input type="checkbox" id="chkSpeaker" checked /> 说话人标注（A/B 轻量分段）</label>
       <label>
         模式
         <select id="modeSelect" class="lang-select">
@@ -340,6 +374,24 @@
     <div class="options" style="margin-top:0.5rem; flex-direction:column; align-items:stretch">
       <label>术语表 / 热词 <span style="color:var(--muted)">（格式：GPT=生成式预训练模型,API=接口）</span></label>
       <textarea id="glossaryInput" class="glossary-box" placeholder="Whisper=语音识别,LLM=大语言模型"></textarea>
+    </div>
+    <div class="style-panel">
+      <label>字幕字号
+        <input type="range" id="styleFontSize" min="90" max="180" value="115" />
+      </label>
+      <label>字幕颜色
+        <input type="color" id="styleColor" value="#f0f6ff" />
+      </label>
+      <label>背景透明度
+        <input type="range" id="styleOpacity" min="20" max="90" value="55" />
+      </label>
+      <label>字幕位置
+        <select id="stylePosition">
+          <option value="top">顶部</option>
+          <option value="center">居中</option>
+          <option value="bottom" selected>底部（默认）</option>
+        </select>
+      </label>
     </div>
   </main>
 
@@ -373,13 +425,18 @@
     const API_HISTORY_SAVE = "/api/history/save/";
     const API_DEMO = "/api/demo/script/";
     const API_EXPORT_BUNDLE = "/api/export/bundle/";
+    const API_SESSION_CONTROL = "/api/session/control/";
     const LS_HISTORY_KEY = "interpreter_local_history";
     const LS_GLOSSARY_KEY = "interpreter_glossary";
+    const LS_STYLE_KEY = "interpreter_sub_style";
     let CHUNK_INTERVAL_MS = 300;
     let qualitySamples = [];
     let saveHistoryTimer = null;
     let demoRunning = false;
     let presentMode = false;
+    let videoStreamPaused = false;
+    let videoStreamAborted = false;
+    let isSeeking = false;
 
     let sessionId = localStorage.getItem("interpreter_session") || crypto.randomUUID();
     localStorage.setItem("interpreter_session", sessionId);
@@ -395,7 +452,12 @@
       btnMic: document.getElementById("btnMic"),
       btnStop: document.getElementById("btnStop"),
       btnVideoStart: document.getElementById("btnVideoStart"),
+      btnVideoPause: document.getElementById("btnVideoPause"),
       btnVideoStop: document.getElementById("btnVideoStop"),
+      playbackBar: document.getElementById("playbackBar"),
+      playbackSeek: document.getElementById("playbackSeek"),
+      playbackTime: document.getElementById("playbackTime"),
+      playbackPct: document.getElementById("playbackPct"),
       videoPreview: document.getElementById("videoPreview"),
       videoPreviewWrap: document.getElementById("videoPreviewWrap"),
       progressWrap: document.getElementById("progressWrap"),
@@ -438,6 +500,12 @@
       presentOverlay: document.getElementById("presentOverlay"),
       presentTarget: document.getElementById("presentTarget"),
       presentSource: document.getElementById("presentSource"),
+      chkSpeaker: document.getElementById("chkSpeaker"),
+      styleFontSize: document.getElementById("styleFontSize"),
+      styleColor: document.getElementById("styleColor"),
+      styleOpacity: document.getElementById("styleOpacity"),
+      stylePosition: document.getElementById("stylePosition"),
+      subtitlePanel: document.querySelector(".subtitle-panel"),
     };
 
     el.sessionLabel.textContent = "会话 " + sessionId.slice(0, 8);
@@ -450,6 +518,65 @@
     function getGlossaryPayload() {
       const text = (el.glossaryInput.value || "").trim();
       return text || "";
+    }
+
+    function formatTime(sec) {
+      const s = Math.max(0, Math.floor(sec || 0));
+      const m = Math.floor(s / 60);
+      return m + ":" + String(s % 60).padStart(2, "0");
+    }
+
+    function applySubtitleStyle() {
+      const size = (el.styleFontSize.value / 100).toFixed(2) + "rem";
+      const opacity = (el.styleOpacity.value / 100).toFixed(2);
+      const pos = el.stylePosition.value;
+      const justify = pos === "top" ? "flex-start" : pos === "center" ? "center" : "flex-end";
+      document.documentElement.style.setProperty("--sub-font-size", size);
+      document.documentElement.style.setProperty("--sub-color", el.styleColor.value);
+      document.documentElement.style.setProperty("--sub-bg-opacity", opacity);
+      document.documentElement.style.setProperty("--sub-justify", justify);
+      localStorage.setItem(LS_STYLE_KEY, JSON.stringify({
+        fontSize: el.styleFontSize.value,
+        color: el.styleColor.value,
+        opacity: el.styleOpacity.value,
+        position: pos,
+      }));
+    }
+
+    function loadSubtitleStyle() {
+      try {
+        const s = JSON.parse(localStorage.getItem(LS_STYLE_KEY) || "{}");
+        if (s.fontSize) el.styleFontSize.value = s.fontSize;
+        if (s.color) el.styleColor.value = s.color;
+        if (s.opacity) el.styleOpacity.value = s.opacity;
+        if (s.position) el.stylePosition.value = s.position;
+      } catch (_) {}
+      applySubtitleStyle();
+    }
+
+    function updatePlaybackUI(progress) {
+      if (!progress?.has_file) {
+        el.playbackBar.classList.remove("show");
+        return;
+      }
+      el.playbackBar.classList.add("show");
+      if (!isSeeking) el.playbackSeek.value = Math.round((progress.percent || 0) * 10);
+      el.playbackPct.textContent = (progress.percent || 0) + "%";
+      el.playbackTime.textContent =
+        formatTime(progress.processed_sec) + " / " + formatTime(progress.total_sec);
+    }
+
+    async function sessionControl(action, position) {
+      const body = { session_id: sessionId, action };
+      if (position != null) body.position = position;
+      const res = await fetch(API_SESSION_CONTROL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (data.percent != null) updatePlaybackUI(data);
+      return data;
     }
 
     function updatePresentOverlay() {
@@ -582,18 +709,21 @@
         if (!showPartial && item.partial) return;
         const div = document.createElement("div");
         const bilingual = el.chkBilingual?.checked;
+        const spk = item.speaker && el.chkSpeaker?.checked ? item.speaker : "";
         div.className = "subtitle-item" +
           (item.partial ? " partial" : "") +
           (item.corrected ? " corrected" : "") +
-          (bilingual ? " bilingual" : "");
+          (bilingual ? " bilingual" : "") +
+          (spk === "A" ? " speaker-a" : spk === "B" ? " speaker-b" : "");
         const badge = item.corrected ? '<span class="badge">已纠错</span>' : "";
+        const spkTag = spk ? `<span class="speaker-tag ${spk.toLowerCase()}">${spk}</span>` : "";
         if (bilingual) {
           div.innerHTML =
-            `<div class="target">${escapeHtml(item.target || "")}${badge}</div>` +
+            `<div class="target">${spkTag}${escapeHtml(item.target || "")}${badge}</div>` +
             `<div class="source">${escapeHtml(item.source || "")}</div>`;
         } else {
           div.innerHTML =
-            `<div class="source">${escapeHtml(item.source || "")}</div>` +
+            `<div class="source">${spkTag}${escapeHtml(item.source || "")}</div>` +
             `<div class="target">${escapeHtml(item.target || "")}${badge}</div>`;
         }
         el.subtitleList.appendChild(div);
@@ -627,6 +757,7 @@
       const row = {
         source, target, partial, corrected: false,
         start_sec: meta.start_sec, end_sec: meta.end_sec,
+        speaker: meta.speaker || null,
       };
       if (last?.partial) {
         Object.assign(last, row);
@@ -672,6 +803,7 @@
       fd.append("separation_method", "auto");
       const gloss = getGlossaryPayload();
       if (gloss) fd.append("glossary", gloss);
+      fd.append("speaker_labels", el.chkSpeaker?.checked ? "1" : "0");
       if (flush) fd.append("flush", "1");
 
       pendingRequests++;
@@ -716,6 +848,7 @@
           corrected: !!h.corrected,
           start_sec: h.start_sec,
           end_sec: h.end_sec,
+          speaker: h.speaker || null,
         });
       });
       renderSubtitles();
@@ -753,9 +886,10 @@
       if (data.quality) updateQualityMetrics(data.quality);
       if (data.corrections?.length) applyCorrections(data.corrections);
       if (data.history?.length) syncHistoryFromServer(data.history);
+      if (data.progress) updatePlaybackUI(data.progress);
       if (data.subtitle) {
-        const { source, target, is_partial, start_sec, end_sec } = data.subtitle;
-        addSubtitle(source, target, is_partial, { start_sec, end_sec });
+        const { source, target, is_partial, start_sec, end_sec, speaker } = data.subtitle;
+        addSubtitle(source, target, is_partial, { start_sec, end_sec, speaker });
         if (target && !is_partial) await playTts(target);
         scheduleAutoSave();
       }
@@ -766,6 +900,7 @@
       fd.append("pull_processed", "1");
       fd.append("session_id", sessionId);
       fd.append("source_lang", el.sourceLang.value);
+      fd.append("speaker_labels", el.chkSpeaker?.checked ? "1" : "0");
       if (flush) fd.append("flush", "1");
       const t0 = performance.now();
       const res = await fetch(API_CHUNK, {
@@ -811,14 +946,34 @@
     }
 
     async function streamProcessedFile() {
-      while (true) {
+      videoStreamAborted = false;
+      videoStreamPaused = false;
+      el.btnVideoPause.disabled = false;
+      el.btnVideoPause.textContent = "暂停";
+      while (!videoStreamAborted) {
+        while (videoStreamPaused && !videoStreamAborted) {
+          await sessionControl("pause");
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        if (videoStreamAborted) break;
+        await sessionControl("resume");
         const data = await pullProcessed(false);
+        if (data.paused) {
+          videoStreamPaused = true;
+          el.btnVideoPause.textContent = "继续";
+          updatePlaybackUI(data.progress);
+          continue;
+        }
         await handleResponse(data);
         if (data.file_eof) break;
         await new Promise((r) => setTimeout(r, 20));
       }
-      const tail = await pullProcessed(true);
-      await handleResponse(tail);
+      if (!videoStreamAborted) {
+        const tail = await pullProcessed(true);
+        await handleResponse(tail);
+      }
+      el.btnVideoPause.disabled = true;
+      el.btnVideoPause.textContent = "暂停";
     }
 
     async function startMic() {
@@ -860,6 +1015,8 @@
     async function processVideoFile(file) {
       el.btnVideoStart.disabled = true;
       el.btnVideoStop.disabled = false;
+      el.btnVideoPause.disabled = false;
+      videoStreamAborted = false;
       try {
         setStatus("上传并提取音轨: " + file.name, "live");
         await ingestMediaFile(file);
@@ -872,6 +1029,7 @@
       } finally {
         el.btnVideoStart.disabled = !selectedVideoFile;
         el.btnVideoStop.disabled = true;
+        el.btnVideoPause.disabled = true;
       }
     }
 
@@ -942,10 +1100,31 @@
     el.btnVideoStart.addEventListener("click", () => {
       if (selectedVideoFile) processVideoFile(selectedVideoFile);
     });
-    el.btnVideoStop.addEventListener("click", () => {
+    el.btnVideoPause.addEventListener("click", async () => {
+      videoStreamPaused = !videoStreamPaused;
+      el.btnVideoPause.textContent = videoStreamPaused ? "继续" : "暂停";
+      await sessionControl(videoStreamPaused ? "pause" : "resume");
+      setStatus(videoStreamPaused ? "视频同传已暂停" : "视频同传继续中", videoStreamPaused ? "warn" : "live");
+    });
+    el.btnVideoStop.addEventListener("click", async () => {
+      videoStreamAborted = true;
+      videoStreamPaused = false;
+      await sessionControl("stop");
       el.btnVideoStart.disabled = !selectedVideoFile;
       el.btnVideoStop.disabled = true;
+      el.btnVideoPause.disabled = true;
       setStatus("已停止");
+    });
+    el.playbackSeek.addEventListener("input", () => {
+      isSeeking = true;
+      const pct = el.playbackSeek.value / 10;
+      el.playbackPct.textContent = pct.toFixed(1) + "%";
+    });
+    el.playbackSeek.addEventListener("change", async () => {
+      const pos = el.playbackSeek.value / 1000;
+      await sessionControl("seek", pos);
+      isSeeking = false;
+      setStatus("已跳转到 " + (pos * 100).toFixed(0) + "%");
     });
     el.fileInput.addEventListener("change", (e) => {
       const f = e.target.files[0];
@@ -975,6 +1154,12 @@
     });
     el.chkPartial.addEventListener("change", renderSubtitles);
     el.chkBilingual.addEventListener("change", renderSubtitles);
+    el.chkSpeaker.addEventListener("change", renderSubtitles);
+    [el.styleFontSize, el.styleColor, el.styleOpacity, el.stylePosition].forEach((node) => {
+      node.addEventListener("input", applySubtitleStyle);
+      node.addEventListener("change", applySubtitleStyle);
+    });
+    loadSubtitleStyle();
     el.modeSelect.addEventListener("change", () => {
       CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 800 : 300;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
