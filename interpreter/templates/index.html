@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 同声传译助手</title>
+  <style>
+    :root {
+      --bg: #0f1419;
+      --card: #1a2332;
+      --accent: #3b82f6;
+      --accent2: #10b981;
+      --text: #e7ecf3;
+      --muted: #8b9cb3;
+      --correct: #f59e0b;
+      --border: #2d3a4f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header p { color: var(--muted); font-size: 0.85rem; }
+    main { max-width: 960px; margin: 0 auto; padding: 1.5rem; }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    button, .file-label {
+      padding: 0.65rem 1.1rem;
+      border-radius: 8px;
+      border: none;
+      font-size: 0.9rem;
+      cursor: pointer;
+      font-weight: 500;
+      transition: opacity 0.15s;
+    }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-danger { background: #ef4444; color: #fff; }
+    .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .file-label {
+      background: var(--card);
+      border: 1px dashed var(--border);
+      color: var(--text);
+      display: inline-flex;
+      align-items: center;
+    }
+    .file-label input { display: none; }
+    .status-bar {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted);
+    }
+    .dot.live { background: var(--accent2); animation: pulse 1.2s infinite; }
+    @keyframes pulse { 50% { opacity: 0.4; } }
+    .subtitle-panel {
+      background: var(--card);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      height: 420px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .subtitle-header {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.8rem;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+    .subtitle-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      scroll-behavior: smooth;
+    }
+    .subtitle-item {
+      margin-bottom: 1rem;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.03);
+      border-left: 3px solid var(--accent);
+    }
+    .subtitle-item.partial { opacity: 0.75; border-left-color: var(--muted); }
+    .subtitle-item.corrected {
+      border-left-color: var(--correct);
+      background: rgba(245, 158, 11, 0.08);
+    }
+    .subtitle-item .source {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+    .subtitle-item .target {
+      font-size: 1.05rem;
+      font-weight: 500;
+    }
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      padding: 0.15rem 0.4rem;
+      border-radius: 4px;
+      background: var(--correct);
+      color: #111;
+      margin-left: 0.5rem;
+      vertical-align: middle;
+    }
+    .options {
+      margin-top: 1rem;
+      display: flex;
+      gap: 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+    .options label { display: flex; align-items: center; gap: 0.35rem; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>AI 同声传译助手</h1>
+      <p>七牛云暑期实训 · Whisper 流式识别 · 大模型翻译纠错 · Edge-TTS</p>
+    </div>
+  </header>
+
+  <main>
+    <div class="controls">
+      <button id="btnMic" class="btn-primary">开始麦克风同传</button>
+      <button id="btnStop" class="btn-danger" disabled>停止</button>
+      <label class="file-label">
+        上传音视频文件
+        <input type="file" id="fileInput" accept="audio/*,video/*" />
+      </label>
+      <button id="btnClear" class="btn-secondary">清空字幕</button>
+    </div>
+
+    <div class="status-bar">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">就绪 — 点击「开始麦克风同传」或上传文件</span>
+    </div>
+
+    <div class="subtitle-panel">
+      <div class="subtitle-header">
+        <span>实时字幕</span>
+        <span id="sessionLabel"></span>
+      </div>
+      <div class="subtitle-list" id="subtitleList"></div>
+    </div>
+
+    <div class="options">
+      <label><input type="checkbox" id="chkTts" checked /> 中文语音播报 (TTS)</label>
+      <label><input type="checkbox" id="chkPartial" checked /> 显示识别中的临时字幕</label>
+    </div>
+  </main>
+
+  <script>
+    const API_CHUNK = "/api/audio/chunk/";
+    const API_RESET = "/api/session/reset/";
+    const API_TTS = "/api/tts/";
+
+    let sessionId = localStorage.getItem("interpreter_session") || crypto.randomUUID();
+    localStorage.setItem("interpreter_session", sessionId);
+    document.getElementById("sessionLabel").textContent = "会话: " + sessionId.slice(0, 8);
+
+    const subtitles = [];
+    let mediaRecorder = null;
+    let micStream = null;
+    let uploadAbort = false;
+
+    const el = {
+      btnMic: document.getElementById("btnMic"),
+      btnStop: document.getElementById("btnStop"),
+      btnClear: document.getElementById("btnClear"),
+      fileInput: document.getElementById("fileInput"),
+      statusText: document.getElementById("statusText"),
+      statusDot: document.getElementById("statusDot"),
+      subtitleList: document.getElementById("subtitleList"),
+      chkTts: document.getElementById("chkTts"),
+      chkPartial: document.getElementById("chkPartial"),
+    };
+
+    function setStatus(text, live = false) {
+      el.statusText.textContent = text;
+      el.statusDot.classList.toggle("live", live);
+    }
+
+    function scrollToBottom() {
+      el.subtitleList.scrollTop = el.subtitleList.scrollHeight;
+    }
+
+    function renderSubtitles() {
+      const showPartial = el.chkPartial.checked;
+      el.subtitleList.innerHTML = "";
+      subtitles.forEach((item, idx) => {
+        if (!showPartial && item.partial) return;
+        const div = document.createElement("div");
+        div.className = "subtitle-item" +
+          (item.partial ? " partial" : "") +
+          (item.corrected ? " corrected" : "");
+        div.dataset.index = idx;
+        div.innerHTML =
+          `<div class="source">${escapeHtml(item.source || "")}</div>` +
+          `<div class="target">${escapeHtml(item.target || "")}` +
+          (item.corrected ? '<span class="badge">已纠错</span>' : "") +
+          `</div>`;
+        el.subtitleList.appendChild(div);
+      });
+      scrollToBottom();
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement("div");
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function applyCorrections(corrections) {
+      if (!corrections || !corrections.length) return;
+      corrections.forEach((c) => {
+        const i = c.index;
+        if (i >= 0 && i < subtitles.length) {
+          if (c.source) subtitles[i].source = c.source;
+          if (c.target) subtitles[i].target = c.target;
+          subtitles[i].corrected = true;
+          subtitles[i].partial = false;
+        }
+      });
+      renderSubtitles();
+    }
+
+    function addSubtitle(source, target, partial) {
+      if (!target && !source) return;
+      const last = subtitles[subtitles.length - 1];
+      if (last && last.partial) {
+        last.source = source;
+        last.target = target;
+        last.partial = partial;
+      } else {
+        subtitles.push({ source, target, partial, corrected: false });
+      }
+      renderSubtitles();
+    }
+
+    async function playTts(text) {
+      if (!el.chkTts.checked || !text.trim()) return;
+      try {
+        const res = await fetch(API_TTS, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
+          body: JSON.stringify({ text, base64: false }),
+        });
+        if (!res.ok) return;
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        audio.onended = () => URL.revokeObjectURL(url);
+        await audio.play();
+      } catch (e) {
+        console.warn("TTS play failed", e);
+      }
+    }
+
+    async function sendChunk(blob, format, flush = false) {
+      const fd = new FormData();
+      fd.append("audio", blob, "chunk." + format);
+      fd.append("format", format);
+      fd.append("session_id", sessionId);
+      if (flush) fd.append("flush", "1");
+
+      const res = await fetch(API_CHUNK, {
+        method: "POST",
+        headers: { "X-Session-Id": sessionId },
+        body: fd,
+      });
+      const data = await res.json();
+      if (data.session_id) {
+        sessionId = data.session_id;
+        localStorage.setItem("interpreter_session", sessionId);
+      }
+      return data;
+    }
+
+    async function handleResponse(data) {
+      if (data.corrections && data.corrections.length) {
+        applyCorrections(data.corrections);
+      }
+      if (data.subtitle) {
+        const { source, target, is_partial } = data.subtitle;
+        addSubtitle(source, target, is_partial);
+        if (target && !is_partial) await playTts(target);
+      }
+    }
+
+    async function startMic() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      } catch (e) {
+        setStatus("无法访问麦克风: " + e.message);
+        return;
+      }
+
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      mediaRecorder = new MediaRecorder(micStream, { mimeType: mime });
+      mediaRecorder.ondataavailable = async (ev) => {
+        if (!ev.data.size) return;
+        try {
+          const data = await sendChunk(ev.data, "webm", false);
+          await handleResponse(data);
+        } catch (e) {
+          console.error(e);
+        }
+      };
+      mediaRecorder.start(1200);
+      el.btnMic.disabled = true;
+      el.btnStop.disabled = false;
+      setStatus("麦克风同传中…", true);
+    }
+
+    async function stopMic() {
+      if (mediaRecorder && mediaRecorder.state !== "inactive") {
+        mediaRecorder.stop();
+        await new Promise((r) => (mediaRecorder.onstop = r));
+        try {
+          const data = await sendChunk(new Blob(), "webm", true);
+          await handleResponse(data);
+        } catch (e) { /* ignore */ }
+      }
+      if (micStream) {
+        micStream.getTracks().forEach((t) => t.stop());
+        micStream = null;
+      }
+      mediaRecorder = null;
+      el.btnMic.disabled = false;
+      el.btnStop.disabled = true;
+      setStatus("已停止");
+    }
+
+    async function processFile(file) {
+      uploadAbort = false;
+      setStatus("正在处理文件: " + file.name, true);
+      el.btnMic.disabled = true;
+
+      const url = URL.createObjectURL(file);
+      const audio = new Audio(url);
+      await new Promise((res, rej) => {
+        audio.onloadedmetadata = res;
+        audio.onerror = rej;
+      });
+
+      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : "audio/webm";
+      const stream = audio.captureStream ? audio.captureStream() : audio.mozCaptureStream?.();
+      if (!stream) {
+        setStatus("浏览器不支持从文件捕获音频流，请换用 Chrome");
+        el.btnMic.disabled = false;
+        URL.revokeObjectURL(url);
+        return;
+      }
+
+      const rec = new MediaRecorder(stream, { mimeType: mime });
+      rec.ondataavailable = async (ev) => {
+        if (uploadAbort || !ev.data.size) return;
+        const data = await sendChunk(ev.data, "webm", false);
+        await handleResponse(data);
+      };
+      rec.start(1500);
+      audio.play();
+
+      audio.onended = async () => {
+        rec.stop();
+        await new Promise((r) => (rec.onstop = r));
+        const data = await sendChunk(new Blob(), "webm", true);
+        await handleResponse(data);
+        URL.revokeObjectURL(url);
+        el.btnMic.disabled = false;
+        setStatus("文件处理完成");
+      };
+    }
+
+    el.btnMic.addEventListener("click", startMic);
+    el.btnStop.addEventListener("click", stopMic);
+    el.fileInput.addEventListener("change", (e) => {
+      const f = e.target.files[0];
+      if (f) processFile(f);
+      e.target.value = "";
+    });
+    el.btnClear.addEventListener("click", async () => {
+      subtitles.length = 0;
+      renderSubtitles();
+      await fetch(API_RESET, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Session-Id": sessionId },
+        body: JSON.stringify({ session_id: sessionId }),
+      });
+      setStatus("字幕已清空");
+    });
+    el.chkPartial.addEventListener("change", renderSubtitles);
+
+    fetch("/api/health/").then((r) => r.json()).then((h) => {
+      setStatus(
+        h.llm_configured
+          ? "服务就绪 · LLM 已配置"
+          : "服务就绪 · 请在 .env 配置 LLM_API_KEY 以启用翻译"
+      );
+    }).catch(() => setStatus("无法连接后端，请先启动 Django"));
+  </script>
+</body>
+</html>

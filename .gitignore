@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+
+# Django
+*.log
+db.sqlite3
+media/
+staticfiles/
+
+# Whisper / models cache
+.cache/
+models/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Audio temp
+/tmp/audio_chunks/
