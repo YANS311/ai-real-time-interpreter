@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>系统状态 · AI 同声传译助手</title>
+  <style>
+    :root {
+      --bg: #0a0e14; --card: #151b26; --text: #e7ecf3; --muted: #8b9cb3;
+      --accent: #3b82f6; --ok: #10b981; --warn: #f59e0b; --border: #2d3a4f;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "SF Pro Text", "PingFang SC", sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100vh; padding: 1.5rem;
+    }
+    a { color: var(--accent); }
+    header { margin-bottom: 1.5rem; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.35rem; }
+    p { color: var(--muted); font-size: 0.85rem; }
+    .grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 0.85rem; max-width: 960px;
+    }
+    .card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1rem;
+    }
+    .card h2 { font-size: 0.78rem; color: var(--muted); font-weight: 500; margin-bottom: 0.5rem; }
+    .card .value { font-size: 1.35rem; font-weight: 700; }
+    .card .sub { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .section { max-width: 960px; margin-top: 1.25rem; }
+    .section h3 { font-size: 0.9rem; margin-bottom: 0.6rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    td, th { padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); text-align: left; }
+    th { color: var(--muted); font-weight: 500; }
+    .refresh { margin-top: 1rem; font-size: 0.8rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>系统状态监控</h1>
+    <p><a href="/">← 返回同传主页</a> · JSON: <a href="/api/status/">/api/status/</a></p>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>服务状态</h2>
+      <div class="value ok">{{ status.status|upper }}</div>
+    </div>
+    <div class="card">
+      <h2>Whisper 模型</h2>
+      <div class="value">{{ status.whisper_model }}</div>
+      <div class="sub">{{ status.whisper_device }}</div>
+    </div>
+    <div class="card">
+      <h2>LLM 翻译</h2>
+      <div class="value {% if status.llm_configured %}ok{% else %}warn{% endif %}">
+        {% if status.llm_configured %}已配置{% else %}未配置{% endif %}
+      </div>
+      <div class="sub">{{ status.llm_model }}</div>
+    </div>
+    <div class="card">
+      <h2>活跃会话</h2>
+      <div class="value">{{ status.sessions.active }}</div>
+      <div class="sub">文件流 {{ status.sessions.with_processed_file }} · 暂停 {{ status.sessions.paused }}</div>
+    </div>
+    <div class="card">
+      <h2>分片间隔</h2>
+      <div class="value">{{ status.chunk_duration_ms }} ms</div>
+    </div>
+    <div class="card">
+      <h2>历史记录</h2>
+      <div class="value">{{ status.history_records }}</div>
+      <div class="sub">服务器已保存条数</div>
+    </div>
+    <div class="card">
+      <h2>Spleeter</h2>
+      <div class="value {% if status.spleeter_available %}ok{% else %}warn{% endif %}">
+        {% if status.spleeter_available %}可用{% else %}未安装{% endif %}
+      </div>
+    </div>
+    <div class="card">
+      <h2>七牛云</h2>
+      <div class="value {% if status.qiniu_configured %}ok{% else %}warn{% endif %}">
+        {% if status.qiniu_configured %}已接入{% else %}未配置{% endif %}
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h3>熔断器状态</h3>
+    <table>
+      <thead><tr><th>组件</th><th>状态</th><th>失败次数</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>ASR</td>
+          <td>{% if status.circuit.asr.open %}<span class="warn">已熔断</span>{% else %}<span class="ok">正常</span>{% endif %}</td>
+          <td>{{ status.circuit.asr.failures }}</td>
+        </tr>
+        <tr>
+          <td>LLM</td>
+          <td>{% if status.circuit.llm.open %}<span class="warn">已熔断</span>{% else %}<span class="ok">正常</span>{% endif %}</td>
+          <td>{{ status.circuit.llm.failures }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="refresh">页面加载时快照 · <a href="" onclick="location.reload();return false;">刷新</a></p>
+</body>
+</html>

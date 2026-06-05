@@ -4,7 +4,11 @@ from . import views
 
 urlpatterns = [
     path("", views.index, name="index"),
+    path("status/", views.status_page, name="status_page"),
+    path("api/status/", views.api_status, name="api_status"),
     path("api/health/", views.api_health, name="api_health"),
+    path("api/session/progress/", views.api_session_progress, name="api_session_progress"),
+    path("api/session/control/", views.api_session_control, name="api_session_control"),
     path("api/audio/chunk/", views.api_audio_chunk, name="api_audio_chunk"),
     path("api/upload/", views.api_upload_file, name="api_upload_file"),
     path("api/video/ingest/", views.api_video_ingest, name="api_video_ingest"),

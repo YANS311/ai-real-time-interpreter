@@ -31,6 +31,7 @@ from .utils.video_extract import extract_audio_from_media, is_supported_media
 from .utils.pipeline import process_audio_segment
 from .utils.qiniu_storage import is_qiniu_configured, upload_bytes
 from .utils.stream import (
+    _SESSIONS,
     cleanup_stale_sessions,
     float32_pcm_to_int16,
     get_or_create_session,
@@ -118,11 +119,14 @@ def _process_segment(
         segment_duration_sec=seg_dur,
         bgm_info=session.bgm_info or None,
         glossary=session.glossary or None,
+        speaker_tracker=session.speaker_tracker,
     )
     session.advance_duration(segment)
     result["session_id"] = session.session_id
     if session.bgm_info:
         result["bgm"] = session.bgm_info
+    if session.total_pcm_bytes:
+        result["progress"] = session.playback_progress()
     return result
 
 
@@ -136,24 +140,33 @@ def api_audio_chunk(request):
     session_id = _session_id(request)
     session = get_or_create_session(session_id)
     _sync_session_glossary(session, request)
+    session.speaker_tracker.enabled = request.POST.get("speaker_labels", "1") == "1"
     source_lang = request.POST.get("source_lang") or "auto"
     flush = request.POST.get("flush") == "1"
     pull_processed = request.POST.get("pull_processed") == "1"
 
     if pull_processed:
+
+        if session.paused:
+            resp = _empty_chunk_response(session_id, session.bgm_info or None)
+            resp["paused"] = True
+            resp["progress"] = session.playback_progress()
+            return JsonResponse(resp)
+
         if flush:
             segment = session.flush_processed()
         else:
             segment = session.take_processed_segment()
-            # 剩余不足一片时自动取出，避免尾段丢失
-            if not segment and session.processed_file_buffer:
+            if not segment and session._processed_remaining() > 1600:
                 segment = session.flush_processed()
         if not segment:
             resp = _empty_chunk_response(session_id, session.bgm_info or None)
-            resp["file_eof"] = True
+            resp["file_eof"] = session._processed_remaining() == 0
+            resp["progress"] = session.playback_progress()
             return JsonResponse(resp)
         result = _process_segment(session, segment, source_lang)
-        result["file_eof"] = not bool(session.processed_file_buffer)
+        result["file_eof"] = session._processed_remaining() == 0
+        result["progress"] = session.playback_progress()
         return JsonResponse(result)
 
     audio_file = request.FILES.get("audio")
@@ -241,6 +254,7 @@ def api_video_ingest(request):
             separation_method=separation_method,
         )
         session.load_processed_file(pcm, sample_rate, bgm_info)
+        session.speaker_tracker.reset()
         bgm_info["extract"] = extract_meta
     except Exception as e:
         return JsonResponse({"error": f"media process failed: {e}"}, status=400)
@@ -356,6 +370,53 @@ def api_export_subtitles(request):
 
 
 @csrf_exempt
+@require_http_methods(["GET"])
+def api_session_progress(request):
+    """视频/文件同传播放进度。"""
+    session_id = _session_id(request)
+    session = get_or_create_session(session_id)
+    return JsonResponse({"session_id": session_id, **session.playback_progress()})
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_session_control(request):
+    """
+    控制视频同传：pause / resume / seek。
+    Body JSON: {"action": "pause"|"resume"|"seek", "position": 0.0~1.0}
+    """
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+    except json.JSONDecodeError:
+        body = {}
+
+    session_id = body.get("session_id") or _session_id(request)
+    session = get_or_create_session(session_id)
+    action = (body.get("action") or request.POST.get("action") or "").lower()
+
+    if action == "pause":
+        session.paused = True
+    elif action == "resume":
+        session.paused = False
+    elif action == "seek":
+        session.seek_processed(float(body.get("position", 0)))
+    elif action == "stop":
+        session.paused = False
+        session.processed_read_offset = len(session.processed_file_pcm)
+    else:
+        return JsonResponse({"error": "unknown action"}, status=400)
+
+    return JsonResponse(
+        {
+            "ok": True,
+            "action": action,
+            "session_id": session_id,
+            **session.playback_progress(),
+        }
+    )
+
+
+@csrf_exempt
 @require_http_methods(["POST"])
 def api_reset_session(request):
     """清空会话缓冲与历史。"""
@@ -456,21 +517,60 @@ def api_history_save(request):
     return JsonResponse({"ok": True, "record": saved})
 
 
+def _system_status_payload() -> dict:
+    """汇总系统运行状态。"""
+    sessions = list(_SESSIONS.values())
+    active_file = sum(1 for s in sessions if s.total_pcm_bytes)
+    paused = sum(1 for s in sessions if s.paused)
+    history_count = len(list_records(limit=500))
+    return {
+        "status": "ok",
+        "whisper_model": settings.WHISPER_MODEL,
+        "whisper_device": settings.WHISPER_DEVICE,
+        "llm_configured": bool(settings.LLM_API_KEY),
+        "llm_model": settings.LLM_MODEL,
+        "qiniu_configured": is_qiniu_configured(),
+        "chunk_duration_ms": int(settings.AUDIO_CHUNK_DURATION_SEC * 1000),
+        "bgm_separation": True,
+        "spleeter_available": is_spleeter_available(),
+        "circuit": {
+            "asr": get_asr_breaker().status(),
+            "llm": get_llm_breaker().status(),
+        },
+        "sessions": {
+            "active": len(sessions),
+            "with_processed_file": active_file,
+            "paused": paused,
+        },
+        "history_records": history_count,
+    }
+
+
+@require_GET
+def status_page(request):
+    """系统状态监控页。"""
+    return render(request, "status.html", {"status": _system_status_payload()})
+
+
+@require_GET
+def api_status(request):
+    """系统状态 JSON。"""
+    return JsonResponse(_system_status_payload())
+
+
 @require_GET
 def api_health(request):
     """健康检查。"""
+    payload = _system_status_payload()
     return JsonResponse(
         {
-            "status": "ok",
-            "whisper_model": settings.WHISPER_MODEL,
-            "llm_configured": bool(settings.LLM_API_KEY),
-            "qiniu_configured": is_qiniu_configured(),
-            "chunk_duration_ms": int(settings.AUDIO_CHUNK_DURATION_SEC * 1000),
-            "bgm_separation": True,
-            "spleeter_available": is_spleeter_available(),
-            "circuit": {
-                "asr": get_asr_breaker().status(),
-                "llm": get_llm_breaker().status(),
-            },
+            "status": payload["status"],
+            "whisper_model": payload["whisper_model"],
+            "llm_configured": payload["llm_configured"],
+            "qiniu_configured": payload["qiniu_configured"],
+            "chunk_duration_ms": payload["chunk_duration_ms"],
+            "bgm_separation": payload["bgm_separation"],
+            "spleeter_available": payload["spleeter_available"],
+            "circuit": payload["circuit"],
         }
     )
