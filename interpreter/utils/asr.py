@@ -101,13 +101,14 @@ def transcribe_pcm(
 def transcribe_stream_chunk(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
+    language: Optional[str] = None,
 ) -> dict:
     """
     流式分片入口：对当前缓冲片段识别。
     空音频返回空结果，不抛错。
     """
     try:
-        return transcribe_pcm(pcm_bytes, sample_rate)
+        return transcribe_pcm(pcm_bytes, sample_rate, language=language)
     except Exception as e:
         logger.exception("ASR failed: %s", e)
         return {

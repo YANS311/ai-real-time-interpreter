@@ -10,6 +10,8 @@ import wave
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from django.conf import settings
+
 # 全局会话缓冲（生产环境可换 Redis）
 _SESSIONS: Dict[str, "AudioStreamSession"] = {}
 
@@ -34,11 +36,13 @@ class AudioStreamSession:
         self.pcm_buffer.extend(pcm_bytes)
         self.touch()
 
-    def take_segment(self, min_duration_sec: float = 1.5) -> Optional[bytes]:
+    def take_segment(self, min_duration_sec: float | None = None) -> Optional[bytes]:
         """
         当缓冲达到最小时长时，取出一段 PCM 并清空已取部分。
         用于流式 ASR 的低延迟分片。
         """
+        if min_duration_sec is None:
+            min_duration_sec = getattr(settings, "AUDIO_CHUNK_DURATION_SEC", 0.3)
         bytes_per_sec = self.sample_rate * 2  # 16-bit mono
         min_bytes = int(bytes_per_sec * min_duration_sec)
         if len(self.pcm_buffer) < min_bytes:
