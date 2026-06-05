@@ -27,6 +27,10 @@ class AudioStreamSession:
     last_active: float = field(default_factory=time.time)
     # 已确认的识别/翻译行（用于纠错上下文）
     history: list = field(default_factory=list)
+    # 服务端预处理的完整文件 PCM（视频人声分离后）
+    processed_file_buffer: bytearray = field(default_factory=bytearray)
+    processed_duration_sec: float = 0.0
+    bgm_info: dict = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_active = time.time()
@@ -58,6 +62,42 @@ class AudioStreamSession:
         data = bytes(self.pcm_buffer)
         self.pcm_buffer.clear()
         return data if len(data) > 1600 else None  # 至少 0.05s
+
+    def load_processed_file(self, pcm: bytes, sample_rate: int, bgm_info: dict) -> None:
+        """载入预处理后的完整文件 PCM（视频 BGM 分离后）。"""
+        self.processed_file_buffer = bytearray(pcm)
+        self.sample_rate = sample_rate
+        self.bgm_info = bgm_info or {}
+        self.processed_duration_sec = 0.0
+        self.pcm_buffer.clear()
+        self.touch()
+
+    def take_processed_segment(self, min_duration_sec: float | None = None) -> Optional[bytes]:
+        """从预处理文件缓冲取分片。"""
+        if not self.processed_file_buffer:
+            return None
+        if min_duration_sec is None:
+            min_duration_sec = getattr(settings, "AUDIO_CHUNK_DURATION_SEC", 0.3)
+        bytes_per_sec = self.sample_rate * 2
+        min_bytes = int(bytes_per_sec * min_duration_sec)
+        if len(self.processed_file_buffer) < min_bytes:
+            return None
+        segment = bytes(self.processed_file_buffer[:min_bytes])
+        del self.processed_file_buffer[:min_bytes]
+        self.touch()
+        return segment
+
+    def flush_processed(self) -> Optional[bytes]:
+        """取出预处理文件剩余缓冲。"""
+        if not self.processed_file_buffer:
+            return None
+        data = bytes(self.processed_file_buffer)
+        self.processed_file_buffer.clear()
+        return data if len(data) > 1600 else None
+
+    def advance_duration(self, segment: bytes) -> None:
+        """推进已处理时长（用于字幕时间轴）。"""
+        self.processed_duration_sec += len(segment) / (self.sample_rate * 2)
 
 
 def get_or_create_session(session_id: str) -> AudioStreamSession:
