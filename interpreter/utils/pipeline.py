@@ -72,6 +72,8 @@ def process_audio_segment(
     history: list,
     source_lang: str = "auto",
     blocking: bool = True,
+    segment_start_sec: float = 0.0,
+    segment_duration_sec: float | None = None,
 ) -> dict[str, Any]:
     """
     处理一段 PCM 音频，返回 ASR + 翻译 + 纠错 + 延迟指标。
@@ -103,13 +105,24 @@ def process_audio_segment(
 
         apply_corrections_to_history(history, result["corrections"])
 
+        if segment_duration_sec is None:
+            segment_duration_sec = len(segment) / (sample_rate * 2)
+        end_sec = segment_start_sec + segment_duration_sec
+
         result["subtitle"] = {
             "source": source_text,
             "target": result["translation"],
             "is_partial": asr.get("is_partial", False),
+            "start_sec": round(segment_start_sec, 3),
+            "end_sec": round(end_sec, 3),
         }
         history.append(
-            {"source": source_text, "target": result["translation"]}
+            {
+                "source": source_text,
+                "target": result["translation"],
+                "start_sec": round(segment_start_sec, 3),
+                "end_sec": round(end_sec, 3),
+            }
         )
         result["latency_ms"] = int((time.perf_counter() - started) * 1000)
         return result
