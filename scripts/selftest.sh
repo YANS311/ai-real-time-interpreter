@@ -14,6 +14,12 @@ echo "==> demo script"
 LINES=$(curl -sf "$BASE/api/demo/script/" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('lines',[])))")
 echo "demo lines: $LINES"
 
+echo "==> vtt export"
+VTT=$(curl -sf -X POST "$BASE/api/export/subtitles/?format=vtt" \
+  -H "Content-Type: application/json" \
+  -d '{"items":[{"source":"hi","target":"你好","start_sec":0,"end_sec":1}]}' | head -1)
+test "$VTT" = "WEBVTT"
+
 echo "==> index page"
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/")
 test "$CODE" = "200"
