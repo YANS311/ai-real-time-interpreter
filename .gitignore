@@ -27,3 +27,6 @@ models/
 
 # Audio temp
 /tmp/audio_chunks/
+
+# Session history (local runtime data)
+data/

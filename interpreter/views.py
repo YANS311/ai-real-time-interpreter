@@ -16,6 +16,13 @@ from django.views.decorators.http import require_GET, require_http_methods
 from .utils.audio_process import is_spleeter_available
 from .utils.bgm import is_video_file, prepare_media_for_interpretation
 from .utils.circuit_breaker import get_asr_breaker, get_llm_breaker
+from .utils.history_store import (
+    delete_record,
+    get_record,
+    items_to_plain_text,
+    list_records,
+    save_record,
+)
 from .utils.subtitle_export import export_subtitles
 from .utils.video_extract import extract_audio_from_media, is_supported_media
 from .utils.pipeline import process_audio_segment
@@ -94,6 +101,7 @@ def _process_segment(
         source_lang=source_lang,
         segment_start_sec=start_sec,
         segment_duration_sec=seg_dur,
+        bgm_info=session.bgm_info or None,
     )
     session.advance_duration(segment)
     result["session_id"] = session.session_id
@@ -333,6 +341,67 @@ def api_tts(request):
         )
 
     return HttpResponse(audio, content_type="audio/mpeg")
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_history_list(request):
+    """列出已保存的同传历史（摘要）。"""
+    limit = int(request.GET.get("limit") or 30)
+    return JsonResponse({"records": list_records(limit=limit)})
+
+
+@csrf_exempt
+@require_http_methods(["GET"])
+def api_history_detail(request, record_id: str):
+    """获取单条历史记录详情。"""
+    record = get_record(record_id)
+    if not record:
+        return JsonResponse({"error": "not found"}, status=404)
+    record["plain_text"] = items_to_plain_text(record.get("items") or [])
+    return JsonResponse(record)
+
+
+@csrf_exempt
+@require_http_methods(["POST", "DELETE"])
+def api_history_record(request, record_id: str):
+    """删除历史记录。"""
+    if request.method != "DELETE":
+        return JsonResponse({"error": "use DELETE"}, status=405)
+    if delete_record(record_id):
+        return JsonResponse({"ok": True})
+    return JsonResponse({"error": "not found"}, status=404)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_history_save(request):
+    """
+    保存当前会话或提交的字幕为历史记录。
+    Body JSON: {"session_id", "title", "items", "meta"}
+    """
+    try:
+        body = json.loads(request.body.decode("utf-8"))
+    except json.JSONDecodeError:
+        body = {}
+
+    session_id = body.get("session_id") or _session_id(request)
+    session = get_or_create_session(session_id)
+    items = body.get("items") or session.history
+    if not items:
+        return JsonResponse({"error": "no subtitles to save"}, status=400)
+
+    meta = body.get("meta") or {}
+    if session.bgm_info:
+        meta["bgm"] = session.bgm_info
+
+    saved = save_record(
+        session_id=session_id,
+        items=items,
+        meta=meta,
+        title=body.get("title"),
+    )
+    return JsonResponse({"ok": True, "record": saved})
 
 
 @require_GET
