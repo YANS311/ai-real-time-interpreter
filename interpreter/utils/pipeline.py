@@ -124,6 +124,17 @@ def process_audio_segment(
                 "end_sec": round(end_sec, 3),
             }
         )
+        result["history"] = [
+            {
+                "index": i,
+                "source": h.get("source", ""),
+                "target": h.get("target", ""),
+                "corrected": h.get("corrected", False),
+                "start_sec": h.get("start_sec"),
+                "end_sec": h.get("end_sec"),
+            }
+            for i, h in enumerate(history)
+        ]
         result["latency_ms"] = int((time.perf_counter() - started) * 1000)
         return result
 
