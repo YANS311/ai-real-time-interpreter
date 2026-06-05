@@ -18,6 +18,7 @@ from .utils.audio_process import is_spleeter_available
 from .utils.demo import load_demo_script
 from .utils.export_bundle import build_export_bundle
 from .utils.glossary import load_default_glossary, merge_glossary, parse_client_glossary
+from .utils.ppt_context import normalize_ppt_text, parse_upload_payload, summarize_context
 from .utils.bgm import is_video_file, prepare_media_for_interpretation
 from .utils.circuit_breaker import get_asr_breaker, get_llm_breaker
 from .utils.history_store import (
@@ -29,16 +30,21 @@ from .utils.history_store import (
 )
 from .utils.subtitle_export import export_subtitles
 from .utils.video_extract import extract_audio_from_media, is_supported_media
+from .utils.correction import apply_session_correction, history_payload
 from .utils.pipeline import process_audio_segment
 from .utils.qiniu_storage import is_qiniu_configured, upload_bytes
+from .utils.ws_events import push_chunk_result, push_session_event
 from .utils.stream import (
-    _SESSIONS,
     cleanup_stale_sessions,
+    delete_session,
     float32_pcm_to_int16,
     get_or_create_session,
+    save_session,
     webm_to_pcm,
     wav_bytes_to_pcm,
 )
+from .utils.session_store import list_sessions
+from .utils.redis_client import redis_status
 from .utils.tts import synthesize_speech
 
 
@@ -82,6 +88,34 @@ def _sync_session_glossary(session, request) -> None:
         session.glossary = load_default_glossary()
 
 
+def _sync_session_ppt_context(session, request) -> None:
+    """从请求更新会话 PPT 上下文。"""
+    raw = (
+        request.POST.get("ppt_context")
+        or request.headers.get("X-Ppt-Context")
+        or request.headers.get("X-PPT-Context")
+    )
+    if raw:
+        session.ppt_context = normalize_ppt_text(raw)
+        session.ppt_context_meta = {"source_type": "inline"}
+
+
+def _sync_session_chunk_duration(session, request) -> None:
+    """从请求同步 ASR 分片时长（秒）。"""
+    raw = request.POST.get("chunk_duration") or request.POST.get("chunk_duration_sec")
+    if raw:
+        try:
+            session.chunk_duration_sec = max(0.1, min(2.0, float(raw)))
+            return
+        except (TypeError, ValueError):
+            pass
+    mode = (request.POST.get("accuracy_mode") or "").lower()
+    if mode == "high":
+        session.chunk_duration_sec = 0.8
+    elif mode == "low":
+        session.chunk_duration_sec = 0.3
+
+
 def _empty_chunk_response(session_id: str, bgm_info: dict | None = None) -> dict:
     resp = {
         "session_id": session_id,
@@ -101,6 +135,7 @@ def _process_segment(
     session,
     segment: bytes,
     source_lang: str,
+    compress_speech_enabled: bool = True,
 ) -> dict:
     """对一段 PCM 执行 ASR + 翻译管线。"""
     seg_dur = len(segment) / (session.sample_rate * 2)
@@ -125,6 +160,8 @@ def _process_segment(
         segment_duration_sec=seg_dur,
         bgm_info=session.bgm_info or None,
         glossary=session.glossary or None,
+        ppt_context=session.ppt_context or "",
+        compress_speech_enabled=compress_speech_enabled,
         speaker_tracker=session.speaker_tracker,
     )
     session.advance_duration(segment)
@@ -133,6 +170,9 @@ def _process_segment(
         result["bgm"] = session.bgm_info
     if session.total_pcm_bytes:
         result["progress"] = session.playback_progress()
+    push_chunk_result(session.session_id, result)
+    save_session(session)
+    result["chunk_duration_ms"] = int(session.effective_chunk_duration() * 1000)
     return result
 
 
@@ -146,10 +186,13 @@ def api_audio_chunk(request):
     session_id = _session_id(request)
     session = get_or_create_session(session_id)
     _sync_session_glossary(session, request)
+    _sync_session_ppt_context(session, request)
+    _sync_session_chunk_duration(session, request)
     session.speaker_tracker.enabled = request.POST.get("speaker_labels", "1") == "1"
     source_lang = request.POST.get("source_lang") or "auto"
     flush = request.POST.get("flush") == "1"
     pull_processed = request.POST.get("pull_processed") == "1"
+    compress_speech_enabled = request.POST.get("compress_speech", "1") == "1"
 
     if pull_processed:
 
@@ -170,7 +213,9 @@ def api_audio_chunk(request):
             resp["file_eof"] = session._processed_remaining() == 0
             resp["progress"] = session.playback_progress()
             return JsonResponse(resp)
-        result = _process_segment(session, segment, source_lang)
+        result = _process_segment(
+            session, segment, source_lang, compress_speech_enabled=compress_speech_enabled
+        )
         result["file_eof"] = session._processed_remaining() == 0
         result["progress"] = session.playback_progress()
         return JsonResponse(result)
@@ -187,6 +232,9 @@ def api_audio_chunk(request):
 
     try:
         pcm, sample_rate = _decode_audio(raw, fmt, sample_rate)
+        # 麦克风实时分片不做 Spleeter 人声分离（过重，会导致严重卡顿）
+        if separate_bgm and not pull_processed:
+            separate_bgm = False
         if (separate_bgm or denoise) and len(pcm) > 3200:
             from pydub import AudioSegment
 
@@ -208,6 +256,7 @@ def api_audio_chunk(request):
             sample_rate = 16000
         session.sample_rate = sample_rate
         session.append_chunk(pcm)
+        save_session(session)
     except Exception as e:
         return JsonResponse({"error": f"audio decode failed: {e}"}, status=400)
 
@@ -215,7 +264,9 @@ def api_audio_chunk(request):
     if not segment:
         return JsonResponse(_empty_chunk_response(session_id))
 
-    result = _process_segment(session, segment, source_lang)
+    result = _process_segment(
+        session, segment, source_lang, compress_speech_enabled=compress_speech_enabled
+    )
     return JsonResponse(result)
 
 
@@ -266,6 +317,7 @@ def api_video_ingest(request):
         return JsonResponse({"error": f"media process failed: {e}"}, status=400)
 
     qiniu_result = upload_bytes(raw, name, media_file.content_type or "application/octet-stream")
+    save_session(session)
 
     return JsonResponse(
         {
@@ -307,6 +359,127 @@ def api_upload_file(request):
     )
 
 
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_upload_ppt(request):
+    """
+    上传 PPT / 演讲上下文（文本或截图 + 可选说明）。
+
+    JSON: {"text": "..."}
+    FormData: text/context 字段，或 file（PNG/JPG 截图）+ 可选 text 补充说明
+    """
+    session_id = _session_id(request)
+    session = get_or_create_session(session_id)
+
+    body: dict = {}
+    if request.body and request.content_type and "json" in request.content_type:
+        try:
+            body = json.loads(request.body.decode("utf-8"))
+        except json.JSONDecodeError:
+            return JsonResponse({"error": "invalid json"}, status=400)
+
+    text = parse_upload_payload(body, request.POST)
+    meta = {"source_type": "text", "source_filename": ""}
+
+    image = request.FILES.get("file") or request.FILES.get("ppt") or request.FILES.get("image")
+    if image:
+        meta["source_filename"] = image.name or "ppt.png"
+        meta["source_type"] = "image"
+        meta["content_type"] = image.content_type or ""
+        meta["size"] = image.size
+        if not text:
+            text = (
+                f"[PPT 截图已上传: {meta['source_filename']}。"
+                "请在 text 字段补充幻灯片标题、章节与关键术语，以便翻译参考。]"
+            )
+
+    if not text:
+        return JsonResponse({"error": "missing text or image"}, status=400)
+
+    session.ppt_context = normalize_ppt_text(text)
+    session.ppt_context_meta = meta
+    save_session(session)
+
+    summary = summarize_context(session.ppt_context, session.ppt_context_meta)
+    return JsonResponse(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "ppt_context": summary,
+        }
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_upload_terms(request):
+    """上传术语表 JSON，合并到当前会话。"""
+    session_id = _session_id(request)
+    session = get_or_create_session(session_id)
+
+    body: dict = {}
+    if request.body:
+        try:
+            body = json.loads(request.body.decode("utf-8"))
+        except json.JSONDecodeError:
+            body = {}
+
+    raw = body.get("terms") or body.get("glossary") or request.POST.get("glossary")
+    if not raw:
+        return JsonResponse({"error": "missing terms"}, status=400)
+
+    parsed = parse_client_glossary(raw)
+    session.glossary = merge_glossary(load_default_glossary(), parsed)
+    save_session(session)
+    return JsonResponse(
+        {
+            "ok": True,
+            "session_id": session_id,
+            "count": len(session.glossary),
+            "glossary": session.glossary,
+        }
+    )
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def api_correct(request):
+    """
+    手动或 LLM 修正字幕行。
+
+    JSON:
+      {"session_id", "index": 0, "new_text": "修正译文", "mode": "manual"|"llm"}
+    """
+    try:
+        body = json.loads(request.body.decode("utf-8")) if request.body else {}
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "invalid json"}, status=400)
+
+    session_id = body.get("session_id") or _session_id(request)
+    session = get_or_create_session(session_id)
+    index = body.get("index")
+    mode = (body.get("mode") or "manual").lower()
+    new_text = (body.get("new_text") or "").strip()
+
+    try:
+        if index is None:
+            raise ValueError("missing index")
+        payload = apply_session_correction(
+            session,
+            int(index),
+            new_text=new_text,
+            mode=mode,
+        )
+    except ValueError as e:
+        return JsonResponse({"error": str(e)}, status=400)
+    except Exception as e:
+        return JsonResponse({"error": f"correction failed: {e}"}, status=500)
+
+    save_session(session)
+    push_session_event(session_id, "correction", payload)
+    return JsonResponse(payload)
+
+
 @require_GET
 def api_demo_script(request):
     """返回内置样例字幕脚本。"""
@@ -332,6 +505,7 @@ def api_export_bundle(request):
     meta = {
         "session_id": session_id,
         "glossary": session.glossary,
+        "ppt_context": summarize_context(session.ppt_context, session.ppt_context_meta),
         "bgm": session.bgm_info,
     }
     data = build_export_bundle(items, meta=meta)
@@ -430,25 +604,24 @@ def api_session_control(request):
     else:
         return JsonResponse({"error": "unknown action"}, status=400)
 
-    return JsonResponse(
-        {
-            "ok": True,
-            "action": action,
-            "session_id": session_id,
-            **session.playback_progress(),
-        }
-    )
+    save_session(session)
+    resp = {
+        "ok": True,
+        "action": action,
+        "session_id": session_id,
+        **session.playback_progress(),
+    }
+    if action == "seek":
+        resp["history"] = history_payload(session.history)
+    return JsonResponse(resp)
 
 
 @csrf_exempt
 @require_http_methods(["POST"])
 def api_reset_session(request):
     """清空会话缓冲与历史。"""
-    from .utils.stream import _SESSIONS
-
     session_id = _session_id(request)
-    if session_id in _SESSIONS:
-        del _SESSIONS[session_id]
+    delete_session(session_id)
     return JsonResponse({"ok": True, "session_id": session_id})
 
 
@@ -543,10 +716,13 @@ def api_history_save(request):
 
 def _system_status_payload() -> dict:
     """汇总系统运行状态。"""
-    sessions = list(_SESSIONS.values())
+    sessions = list_sessions(limit=500)
     active_file = sum(1 for s in sessions if s.total_pcm_bytes)
     paused = sum(1 for s in sessions if s.paused)
     history_count = len(list_records(limit=500))
+    redis_info = redis_status()
+    channel_layer = "redis" if redis_info["enabled"] else "memory"
+    session_backend = "redis" if redis_info["enabled"] and settings.REDIS_SESSIONS_ENABLED else "memory"
     return {
         "status": "ok",
         "whisper_model": settings.WHISPER_MODEL,
@@ -555,6 +731,12 @@ def _system_status_payload() -> dict:
         "llm_model": settings.LLM_MODEL,
         "qiniu_configured": is_qiniu_configured(),
         "chunk_duration_ms": int(settings.AUDIO_CHUNK_DURATION_SEC * 1000),
+        "speech_compressor_enabled": getattr(settings, "SPEECH_COMPRESSOR_ENABLED", True),
+        "channels_enabled": getattr(settings, "CHANNELS_ENABLED", True),
+        "websocket_path": "/ws/interpreter/<session_id>/",
+        "redis": redis_info,
+        "channel_layer": channel_layer,
+        "session_backend": session_backend,
         "bgm_separation": True,
         "spleeter_available": is_spleeter_available(),
         "circuit": {
@@ -596,5 +778,7 @@ def api_health(request):
             "bgm_separation": payload["bgm_separation"],
             "spleeter_available": payload["spleeter_available"],
             "circuit": payload["circuit"],
+            "redis_connected": payload["redis"]["connected"],
+            "session_backend": payload["session_backend"],
         }
     )

@@ -1,5 +1,5 @@
 """
-非阻塞流式处理管线：解码 → ASR → 翻译纠错，带耗时统计与熔断。
+非阻塞流式处理管线：解码 → ASR → 口语压缩 → 翻译纠错，带耗时统计与熔断。
 """
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ from .asr import transcribe_stream_chunk
 from .circuit_breaker import get_asr_breaker, get_llm_breaker
 from .quality import compute_segment_quality
 from .speaker import SpeakerTracker
+from .speech_compressor import compress_speech
+from .correction import history_payload
 from .translate import apply_corrections_to_history, translate_with_correction
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,7 @@ def _run_translate(
     history: list,
     source_lang: str,
     glossary: dict | None = None,
+    ppt_context: str = "",
 ) -> dict:
     breaker = get_llm_breaker()
     if breaker.is_open():
@@ -58,6 +61,7 @@ def _run_translate(
             history,
             source_lang=source_lang,
             glossary=glossary,
+            ppt_context=ppt_context,
         )
         if result.get("error"):
             breaker.record_failure()
@@ -86,6 +90,8 @@ def process_audio_segment(
     segment_duration_sec: float | None = None,
     bgm_info: dict | None = None,
     glossary: dict | None = None,
+    ppt_context: str = "",
+    compress_speech_enabled: bool = True,
     speaker_tracker: SpeakerTracker | None = None,
 ) -> dict[str, Any]:
     """
@@ -115,7 +121,22 @@ def process_audio_segment(
             )
             return result
 
-        tr = _run_translate(source_text, history, source_lang, glossary)
+        compression = {"text": source_text, "compressed": False, "skipped": True, "reason": "disabled"}
+        translate_source = source_text
+        if compress_speech_enabled:
+            compression = compress_speech(source_text, source_lang=source_lang)
+            translate_source = compression.get("text") or source_text
+        result["speech_compression"] = compression
+        if compression.get("compressed"):
+            asr = {**asr, "raw_text": source_text, "text": translate_source}
+
+        tr = _run_translate(
+            translate_source,
+            history,
+            source_lang,
+            glossary,
+            ppt_context=ppt_context,
+        )
         result["translation"] = tr.get("translation", "")
         result["corrections"] = tr.get("corrections", [])
         result["fallback"] = tr.get("fallback", False)
@@ -133,7 +154,8 @@ def process_audio_segment(
             )
 
         result["subtitle"] = {
-            "source": source_text,
+            "source": translate_source,
+            "source_raw": source_text if translate_source != source_text else "",
             "target": result["translation"],
             "is_partial": asr.get("is_partial", False),
             "start_sec": round(segment_start_sec, 3),
@@ -142,25 +164,15 @@ def process_audio_segment(
         }
         history.append(
             {
-                "source": source_text,
+                "source": translate_source,
+                "source_raw": source_text if translate_source != source_text else "",
                 "target": result["translation"],
                 "start_sec": round(segment_start_sec, 3),
                 "end_sec": round(end_sec, 3),
                 "speaker": speaker,
             }
         )
-        result["history"] = [
-            {
-                "index": i,
-                "source": h.get("source", ""),
-                "target": h.get("target", ""),
-                "corrected": h.get("corrected", False),
-                "start_sec": h.get("start_sec"),
-                "end_sec": h.get("end_sec"),
-                "speaker": h.get("speaker"),
-            }
-            for i, h in enumerate(history)
-        ]
+        result["history"] = history_payload(history)
         latency = int((time.perf_counter() - started) * 1000)
         result["latency_ms"] = latency
         result["quality"] = compute_segment_quality(

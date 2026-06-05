@@ -12,9 +12,16 @@ from typing import Dict, Optional
 
 from django.conf import settings
 
+from .session_store import (
+    cleanup_stale_sessions,
+    delete_session,
+    list_sessions,
+    persist_session,
+    redis_sessions_enabled,
+)
 from .speaker import SpeakerTracker
 
-# 全局会话缓冲（生产环境可换 Redis）
+# 全局会话缓冲（未配置 REDIS_URL 时使用）
 _SESSIONS: Dict[str, "AudioStreamSession"] = {}
 
 
@@ -37,8 +44,16 @@ class AudioStreamSession:
     paused: bool = False
     bgm_info: dict = field(default_factory=dict)
     glossary: dict = field(default_factory=dict)
+    ppt_context: str = ""
+    ppt_context_meta: dict = field(default_factory=dict)
+    chunk_duration_sec: float | None = None
     speaker_enabled: bool = True
     speaker_tracker: SpeakerTracker = field(default_factory=SpeakerTracker)
+
+    def effective_chunk_duration(self) -> float:
+        if self.chunk_duration_sec is not None:
+            return self.chunk_duration_sec
+        return getattr(settings, "AUDIO_CHUNK_DURATION_SEC", 0.3)
 
     def touch(self) -> None:
         self.last_active = time.time()
@@ -54,7 +69,7 @@ class AudioStreamSession:
         用于流式 ASR 的低延迟分片。
         """
         if min_duration_sec is None:
-            min_duration_sec = getattr(settings, "AUDIO_CHUNK_DURATION_SEC", 0.3)
+            min_duration_sec = self.effective_chunk_duration()
         bytes_per_sec = self.sample_rate * 2  # 16-bit mono
         min_bytes = int(bytes_per_sec * min_duration_sec)
         if len(self.pcm_buffer) < min_bytes:
@@ -91,7 +106,7 @@ class AudioStreamSession:
         if self.paused or not self.processed_file_pcm:
             return None
         if min_duration_sec is None:
-            min_duration_sec = getattr(settings, "AUDIO_CHUNK_DURATION_SEC", 0.3)
+            min_duration_sec = self.effective_chunk_duration()
         bytes_per_sec = self.sample_rate * 2
         min_bytes = int(bytes_per_sec * min_duration_sec)
         remaining = self._processed_remaining()
@@ -115,13 +130,21 @@ class AudioStreamSession:
         self.touch()
         return segment
 
-    def seek_processed(self, ratio: float) -> None:
-        """跳转到预处理文件的指定进度（0~1）。"""
+    def seek_processed(self, ratio: float) -> float:
+        """跳转到预处理文件的指定进度（0~1），并截断跳转点之后的字幕历史。"""
         if not self.total_pcm_bytes:
-            return
+            return 0.0
         ratio = max(0.0, min(1.0, ratio))
         self.processed_read_offset = int(self.total_pcm_bytes * ratio)
         self.processed_duration_sec = self.processed_read_offset / (self.sample_rate * 2)
+        target_sec = self.processed_duration_sec
+        self.history = [
+            h
+            for h in self.history
+            if (h.get("end_sec") or 0) <= target_sec + 0.05
+        ]
+        self.touch()
+        return target_sec
 
     def playback_progress(self) -> dict:
         """视频/文件同传播放进度。"""
@@ -149,6 +172,14 @@ class AudioStreamSession:
 
 
 def get_or_create_session(session_id: str) -> AudioStreamSession:
+    if redis_sessions_enabled():
+        session = load_session_from_store(session_id)
+        if session is None:
+            session = AudioStreamSession(session_id=session_id)
+        session.touch()
+        persist_session(session)
+        return session
+
     if session_id not in _SESSIONS:
         _SESSIONS[session_id] = AudioStreamSession(session_id=session_id)
     else:
@@ -156,11 +187,18 @@ def get_or_create_session(session_id: str) -> AudioStreamSession:
     return _SESSIONS[session_id]
 
 
-def cleanup_stale_sessions(ttl: int = 3600) -> None:
-    now = time.time()
-    stale = [k for k, v in _SESSIONS.items() if now - v.last_active > ttl]
-    for k in stale:
-        del _SESSIONS[k]
+def load_session_from_store(session_id: str) -> Optional[AudioStreamSession]:
+    from .session_store import load_session
+
+    return load_session(session_id)
+
+
+def save_session(session: AudioStreamSession) -> None:
+    """将会话写回存储（Redis 或内存）。"""
+    if redis_sessions_enabled():
+        persist_session(session)
+    else:
+        _SESSIONS[session.session_id] = session
 
 
 def webm_to_pcm(webm_bytes: bytes, target_rate: int = 16000) -> bytes:

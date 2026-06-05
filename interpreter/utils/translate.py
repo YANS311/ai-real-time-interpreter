@@ -12,6 +12,7 @@ import httpx
 from django.conf import settings
 
 from .glossary import format_glossary_prompt, merge_glossary, load_default_glossary
+from .ppt_context import format_ppt_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,7 @@ def translate_with_correction(
     history: list[dict],
     source_lang: str = "auto",
     glossary: dict[str, str] | None = None,
+    ppt_context: str = "",
 ) -> dict[str, Any]:
     """
     翻译当前片段，并可能对历史字幕纠错。
@@ -137,6 +139,8 @@ def translate_with_correction(
     terms = merge_glossary(load_default_glossary(), glossary or {})
     glossary_block = format_glossary_prompt(terms)
     glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
+    ppt_block = format_ppt_prompt(ppt_context)
+    ppt_section = f"\n\n{ppt_block}" if ppt_block else ""
 
     user_content = f"""源语言：{lang_hint}
 
@@ -146,7 +150,7 @@ def translate_with_correction(
 当前新识别原文：
 {source_text}
 
-请翻译当前原文，并检查历史是否需要纠错。{glossary_section}"""
+请翻译当前原文，并检查历史是否需要纠错。{glossary_section}{ppt_section}"""
 
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

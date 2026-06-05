@@ -272,6 +272,28 @@
       background: var(--card); color: var(--text); border: 1px solid var(--border);
       border-radius: 8px; padding: 0.6rem; font-size: 0.82rem; resize: vertical;
     }
+    .correct-overlay {
+      display: none; position: fixed; inset: 0; z-index: 300;
+      background: rgba(0,0,0,0.65); align-items: center; justify-content: center; padding: 1rem;
+    }
+    .correct-overlay.show { display: flex; }
+    .correct-modal {
+      width: min(520px, 96vw); background: var(--card); border: 1px solid var(--border);
+      border-radius: 12px; padding: 1rem 1.1rem; box-shadow: 0 16px 48px rgba(0,0,0,0.45);
+    }
+    .correct-modal h3 { font-size: 1rem; margin-bottom: 0.75rem; }
+    .correct-modal label { display: block; font-size: 0.78rem; color: var(--muted); margin: 0.5rem 0 0.25rem; }
+    .correct-readonly {
+      background: #0f141d; border: 1px solid var(--border); border-radius: 8px;
+      padding: 0.55rem 0.65rem; font-size: 0.85rem; color: var(--muted); min-height: 2.2rem;
+    }
+    .correct-modal textarea {
+      width: 100%; min-height: 88px; background: #0f141d; color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem; font-size: 0.95rem;
+      resize: vertical;
+    }
+    .correct-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.85rem; }
+    .subtitle-item { cursor: pointer; }
     @media (max-width: 600px) {
       header h1 { font-size: 1rem; }
       .controls button, .controls .file-label, .lang-select { width: 100%; justify-content: center; }
@@ -294,6 +316,7 @@
       <span class="metric-pill">分片 <strong id="chunkMs">300</strong> ms</span>
       <span class="metric-pill" id="bgmPill">BGM <strong id="bgmStatus">--</strong></span>
       <span class="metric-pill" id="qiniuPill">七牛 <strong>--</strong></span>
+      <span class="metric-pill" id="wsPill">WS <strong id="wsStatus">--</strong></span>
     </div>
   </header>
 
@@ -361,12 +384,13 @@
     </div>
 
     <div class="options">
-      <label><input type="checkbox" id="chkTts" checked /> 中文语音播报</label>
+      <label><input type="checkbox" id="chkTts" /> 中文语音播报</label>
       <label><input type="checkbox" id="chkPartial" checked /> 显示临时字幕</label>
-      <label><input type="checkbox" id="chkBgm" checked /> BGM 人声分离（Spleeter/快速）</label>
+      <label><input type="checkbox" id="chkBgm" /> BGM 人声分离（视频/文件，麦克风勿开）</label>
       <label><input type="checkbox" id="chkDenoise" checked /> 环境降噪（风声/杂音）</label>
       <label><input type="checkbox" id="chkBilingual" checked /> 双语字幕（中文在上·原文在下）</label>
       <label><input type="checkbox" id="chkSpeaker" checked /> 说话人标注（A/B 轻量分段）</label>
+      <label><input type="checkbox" id="chkCompress" checked /> 口语压缩（去 um/重复后再翻译）</label>
       <label>
         模式
         <select id="modeSelect" class="lang-select">
@@ -378,6 +402,18 @@
     <div class="options" style="margin-top:0.5rem; flex-direction:column; align-items:stretch">
       <label>术语表 / 热词 <span style="color:var(--muted)">（格式：GPT=生成式预训练模型,API=接口）</span></label>
       <textarea id="glossaryInput" class="glossary-box" placeholder="Whisper=语音识别,LLM=大语言模型"></textarea>
+    </div>
+    <div class="options" style="margin-top:0.5rem; flex-direction:column; align-items:stretch">
+      <label>PPT / 演讲上下文 <span style="color:var(--muted)">（粘贴幻灯片大纲或上传截图 + 说明）</span></label>
+      <textarea id="pptContextInput" class="glossary-box" placeholder="例如：第1章 大语言模型简介；GPT=生成式预训练模型；本章讨论 Transformer 架构…"></textarea>
+      <div class="controls" style="margin-top:0.5rem; padding:0">
+        <label class="file-label btn-secondary" style="margin:0">
+          上传 PPT 截图
+          <input type="file" id="pptImageInput" accept="image/png,image/jpeg,image/webp,image/*" hidden />
+        </label>
+        <button type="button" id="btnSavePpt" class="btn-secondary">保存 PPT 上下文</button>
+        <span id="pptContextStatus" style="font-size:0.8rem;color:var(--muted)">未配置</span>
+      </div>
     </div>
     <div class="style-panel">
       <label>字幕字号
@@ -418,6 +454,22 @@
     </div>
   </aside>
 
+  <div class="correct-overlay" id="correctOverlay">
+    <div class="correct-modal">
+      <h3>修正字幕 <span id="correctIndexLabel" style="color:var(--muted);font-size:0.85rem"></span></h3>
+      <label>原文</label>
+      <div id="correctSource" class="correct-readonly"></div>
+      <label>中文译文</label>
+      <textarea id="correctTarget" placeholder="输入修正后的中文译文"></textarea>
+      <div class="correct-actions">
+        <button type="button" id="btnCorrectSave" class="btn-primary">保存修正</button>
+        <button type="button" id="btnCorrectLlm" class="btn-secondary">LLM 重译</button>
+        <button type="button" id="btnCorrectCopy" class="btn-secondary">复制译文</button>
+        <button type="button" id="btnCorrectCancel" class="btn-secondary">取消</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const API_CHUNK = "/api/audio/chunk/";
     const API_UPLOAD = "/api/upload/";
@@ -430,8 +482,12 @@
     const API_DEMO = "/api/demo/script/";
     const API_EXPORT_BUNDLE = "/api/export/bundle/";
     const API_SESSION_CONTROL = "/api/session/control/";
+    const API_UPLOAD_PPT = "/api/upload-ppt/";
+    const API_UPLOAD_TERMS = "/api/upload-terms/";
+    const API_CORRECT = "/api/correct/";
     const LS_HISTORY_KEY = "interpreter_local_history";
     const LS_GLOSSARY_KEY = "interpreter_glossary";
+    const LS_PPT_CONTEXT_KEY = "interpreter_ppt_context";
     const LS_STYLE_KEY = "interpreter_sub_style";
     let CHUNK_INTERVAL_MS = 300;
     let qualitySamples = [];
@@ -441,6 +497,10 @@
     let videoStreamPaused = false;
     let videoStreamAborted = false;
     let isSeeking = false;
+    let wsSocket = null;
+    let wsConnected = false;
+    let wsReconnectTimer = null;
+    let correctingIndex = null;
 
     let sessionId = localStorage.getItem("interpreter_session") || crypto.randomUUID();
     localStorage.setItem("interpreter_session", sessionId);
@@ -506,6 +566,20 @@
       presentTarget: document.getElementById("presentTarget"),
       presentSource: document.getElementById("presentSource"),
       chkSpeaker: document.getElementById("chkSpeaker"),
+      chkCompress: document.getElementById("chkCompress"),
+      pptContextInput: document.getElementById("pptContextInput"),
+      pptImageInput: document.getElementById("pptImageInput"),
+      btnSavePpt: document.getElementById("btnSavePpt"),
+      pptContextStatus: document.getElementById("pptContextStatus"),
+      wsStatus: document.getElementById("wsStatus"),
+      correctOverlay: document.getElementById("correctOverlay"),
+      correctSource: document.getElementById("correctSource"),
+      correctTarget: document.getElementById("correctTarget"),
+      correctIndexLabel: document.getElementById("correctIndexLabel"),
+      btnCorrectSave: document.getElementById("btnCorrectSave"),
+      btnCorrectLlm: document.getElementById("btnCorrectLlm"),
+      btnCorrectCopy: document.getElementById("btnCorrectCopy"),
+      btnCorrectCancel: document.getElementById("btnCorrectCancel"),
       styleFontSize: document.getElementById("styleFontSize"),
       styleColor: document.getElementById("styleColor"),
       styleOpacity: document.getElementById("styleOpacity"),
@@ -519,10 +593,196 @@
     el.glossaryInput.addEventListener("input", () => {
       localStorage.setItem(LS_GLOSSARY_KEY, el.glossaryInput.value.trim());
     });
+    el.pptContextInput.value = localStorage.getItem(LS_PPT_CONTEXT_KEY) || "";
+    el.pptContextInput.addEventListener("input", () => {
+      localStorage.setItem(LS_PPT_CONTEXT_KEY, el.pptContextInput.value.trim());
+      updatePptContextStatus(null);
+    });
 
     function getGlossaryPayload() {
       const text = (el.glossaryInput.value || "").trim();
       return text || "";
+    }
+
+    function getPptContextPayload() {
+      return (el.pptContextInput.value || "").trim();
+    }
+
+    function updatePptContextStatus(summary) {
+      if (summary?.configured) {
+        el.pptContextStatus.textContent = "已配置 · " + summary.chars + " 字";
+        return;
+      }
+      const text = getPptContextPayload();
+      el.pptContextStatus.textContent = text ? "待保存 · " + text.length + " 字" : "未配置";
+    }
+
+    async function savePptContext(imageFile) {
+      const text = getPptContextPayload();
+      if (!text && !imageFile) {
+        setStatus("请填写 PPT 上下文或选择截图", "warn");
+        return;
+      }
+      const fd = new FormData();
+      fd.append("session_id", sessionId);
+      if (text) fd.append("text", text);
+      if (imageFile) fd.append("file", imageFile, imageFile.name);
+      const res = await fetch(API_UPLOAD_PPT, {
+        method: "POST",
+        headers: { "X-Session-Id": sessionId },
+        body: fd,
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setStatus(data.error || "PPT 上下文保存失败", "error");
+        return;
+      }
+      if (data.session_id) {
+        sessionId = data.session_id;
+        localStorage.setItem("interpreter_session", sessionId);
+        el.sessionLabel.textContent = "会话 " + sessionId.slice(0, 8);
+      }
+      updatePptContextStatus(data.ppt_context);
+      setStatus("PPT 上下文已保存");
+    }
+
+    function appendPipelineOptions(fd) {
+      const gloss = getGlossaryPayload();
+      if (gloss) fd.append("glossary", gloss);
+      const ppt = getPptContextPayload();
+      if (ppt) fd.append("ppt_context", ppt);
+      fd.append("compress_speech", el.chkCompress?.checked ? "1" : "0");
+      fd.append("speaker_labels", el.chkSpeaker?.checked ? "1" : "0");
+      fd.append("chunk_duration", String(CHUNK_INTERVAL_MS / 1000));
+      fd.append("accuracy_mode", el.modeSelect?.value === "high" ? "high" : "low");
+    }
+
+    function setWsStatus(state) {
+      el.wsStatus.textContent = state;
+    }
+
+    function wsUrl() {
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${location.host}/ws/interpreter/${sessionId}/`;
+    }
+
+    function connectWebSocket() {
+      if (wsReconnectTimer) {
+        clearTimeout(wsReconnectTimer);
+        wsReconnectTimer = null;
+      }
+      if (wsSocket) {
+        try { wsSocket.close(); } catch (_) {}
+        wsSocket = null;
+      }
+      setWsStatus("连接中");
+      const socket = new WebSocket(wsUrl());
+      wsSocket = socket;
+      socket.onopen = () => {
+        wsConnected = true;
+        setWsStatus("已连接");
+      };
+      socket.onclose = () => {
+        wsConnected = false;
+        setWsStatus("断开");
+        wsSocket = null;
+        wsReconnectTimer = setTimeout(connectWebSocket, 2500);
+      };
+      socket.onerror = () => setWsStatus("错误");
+      socket.onmessage = (ev) => {
+        try {
+          handleWsMessage(JSON.parse(ev.data));
+        } catch (e) {
+          console.warn("WS parse failed", e);
+        }
+      };
+    }
+
+    function sendWsCorrection(payload) {
+      if (wsConnected && wsSocket?.readyState === WebSocket.OPEN) {
+        wsSocket.send(JSON.stringify({ action: "correct", ...payload }));
+        return true;
+      }
+      return false;
+    }
+
+    function handleWsMessage(msg) {
+      if (msg.type === "connected") {
+        setWsStatus("已连接");
+        return;
+      }
+      if (msg.type === "error") {
+        setStatus(msg.error || "WebSocket 错误", "error");
+        return;
+      }
+      if (msg.type === "correction") {
+        if (msg.history?.length) syncHistoryFromServer(msg.history);
+        else if (msg.correction) applyCorrections([msg.correction]);
+        closeCorrectionModal();
+        setStatus(msg.correction?.mode === "llm" ? "LLM 重译完成" : "字幕已修正");
+        updatePresentOverlay();
+        return;
+      }
+      if (msg.type === "chunk_result") {
+        handleResponse(msg, true);
+      }
+    }
+
+    function openCorrectionModal(index) {
+      const item = subtitles[index];
+      if (!item || item.partial) return;
+      correctingIndex = index;
+      el.correctIndexLabel.textContent = `#${index}`;
+      el.correctSource.textContent = item.source || "";
+      el.correctTarget.value = item.target || "";
+      el.correctOverlay.classList.add("show");
+      el.correctTarget.focus();
+    }
+
+    function closeCorrectionModal() {
+      correctingIndex = null;
+      el.correctOverlay.classList.remove("show");
+    }
+
+    async function submitCorrection(mode) {
+      if (correctingIndex == null) return;
+      const newText = (el.correctTarget.value || "").trim();
+      if (mode === "manual" && !newText) {
+        setStatus("请输入修正译文", "warn");
+        return;
+      }
+      const payload = {
+        session_id: sessionId,
+        index: correctingIndex,
+        mode,
+        new_text: newText,
+      };
+      if (sendWsCorrection(payload)) {
+        setStatus(mode === "llm" ? "LLM 重译中…" : "保存修正中…");
+        return;
+      }
+      try {
+        const res = await fetch(API_CORRECT, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Id": sessionId,
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setStatus(data.error || "修正失败", "error");
+          return;
+        }
+        if (data.history?.length) syncHistoryFromServer(data.history);
+        else if (data.correction) applyCorrections([data.correction]);
+        closeCorrectionModal();
+        setStatus(mode === "llm" ? "LLM 重译完成" : "字幕已修正");
+        updatePresentOverlay();
+      } catch (e) {
+        setStatus("修正请求失败", "error");
+      }
     }
 
     function formatTime(sec) {
@@ -581,6 +841,7 @@
       });
       const data = await res.json();
       if (data.percent != null) updatePlaybackUI(data);
+      if (data.history?.length) syncHistoryFromServer(data.history);
       return data;
     }
 
@@ -731,13 +992,8 @@
             `<div class="source">${spkTag}${escapeHtml(item.source || "")}</div>` +
             `<div class="target">${escapeHtml(item.target || "")}${badge}</div>`;
         }
-        div.title = "点击复制该行字幕";
-        div.addEventListener("click", async () => {
-          const text = (item.target || item.source || "").trim();
-          if (!text) return;
-          await navigator.clipboard.writeText(text);
-          setStatus("已复制字幕行");
-        });
+        div.title = "点击修正该行字幕";
+        div.addEventListener("click", () => openCorrectionModal(idx));
         el.subtitleList.appendChild(div);
       });
       scrollToBottom();
@@ -813,9 +1069,7 @@
       fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
       fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
       fd.append("separation_method", "auto");
-      const gloss = getGlossaryPayload();
-      if (gloss) fd.append("glossary", gloss);
-      fd.append("speaker_labels", el.chkSpeaker?.checked ? "1" : "0");
+      appendPipelineOptions(fd);
       if (flush) fd.append("flush", "1");
 
       pendingRequests++;
@@ -893,17 +1147,29 @@
       });
     }
 
-    async function handleResponse(data) {
+    async function handleResponse(data, fromWs = false) {
       if (data.bgm) setBgmInfo(data.bgm);
       if (data.quality) updateQualityMetrics(data.quality);
-      if (data.corrections?.length) applyCorrections(data.corrections);
-      if (data.history?.length) syncHistoryFromServer(data.history);
       if (data.progress) updatePlaybackUI(data.progress);
-      if (data.subtitle) {
-        const { source, target, is_partial, start_sec, end_sec, speaker } = data.subtitle;
-        addSubtitle(source, target, is_partial, { start_sec, end_sec, speaker });
-        if (target && !is_partial) await playTts(target);
+      if (data.latency_ms != null) updateLatency(data.latency_ms);
+
+      if (data.history?.length) {
+        syncHistoryFromServer(data.history);
+        const last = data.history[data.history.length - 1];
+        if (last?.target && !data.subtitle?.is_partial) await playTts(last.target);
         scheduleAutoSave();
+        updatePresentOverlay();
+        return;
+      }
+
+      if (fromWs || !wsConnected) {
+        if (data.corrections?.length) applyCorrections(data.corrections);
+        if (data.subtitle) {
+          const { source, target, is_partial, start_sec, end_sec, speaker } = data.subtitle;
+          addSubtitle(source, target, is_partial, { start_sec, end_sec, speaker });
+          if (target && !is_partial) await playTts(target);
+          scheduleAutoSave();
+        }
       }
     }
 
@@ -912,7 +1178,7 @@
       fd.append("pull_processed", "1");
       fd.append("session_id", sessionId);
       fd.append("source_lang", el.sourceLang.value);
-      fd.append("speaker_labels", el.chkSpeaker?.checked ? "1" : "0");
+      appendPipelineOptions(fd);
       if (flush) fd.append("flush", "1");
       const t0 = performance.now();
       const res = await fetch(API_CHUNK, {
@@ -1175,7 +1441,7 @@
     el.modeSelect.addEventListener("change", () => {
       CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 800 : 300;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
-      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 300 ? "低延迟" : "高准确率") + "模式");
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 300 ? "低延迟(300ms)" : "高准确率(800ms)") + "模式");
     });
     async function runDemoMode() {
       if (demoRunning) return;
@@ -1299,6 +1565,27 @@
     }
     el.btnExportSrt.addEventListener("click", () => exportSubtitles("srt", "subtitles", "SRT"));
     el.btnExportVtt.addEventListener("click", () => exportSubtitles("vtt", "subtitles", "VTT"));
+    el.btnSavePpt.addEventListener("click", () => savePptContext());
+    el.pptImageInput.addEventListener("change", async () => {
+      const file = el.pptImageInput.files?.[0];
+      if (!file) return;
+      await savePptContext(file);
+      el.pptImageInput.value = "";
+    });
+    el.btnCorrectSave.addEventListener("click", () => submitCorrection("manual"));
+    el.btnCorrectLlm.addEventListener("click", () => submitCorrection("llm"));
+    el.btnCorrectCopy.addEventListener("click", async () => {
+      const text = (el.correctTarget.value || "").trim();
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+      setStatus("已复制译文");
+    });
+    el.btnCorrectCancel.addEventListener("click", closeCorrectionModal);
+    el.correctOverlay.addEventListener("click", (e) => {
+      if (e.target === el.correctOverlay) closeCorrectionModal();
+    });
+    updatePptContextStatus(null);
+    connectWebSocket();
 
     fetch("/api/health/").then((r) => r.json()).then((h) => {
       if (h.chunk_duration_ms) el.chunkMs.textContent = String(h.chunk_duration_ms);

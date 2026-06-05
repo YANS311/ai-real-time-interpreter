@@ -33,7 +33,7 @@ jobs:
 
       - name: Smoke test
         run: |
-          python manage.py runserver 127.0.0.1:8765 &
+          daphne -b 127.0.0.1 -p 8765 core.asgi:application &
           SERVER_PID=$!
           sleep 4
           chmod +x scripts/selftest.sh

@@ -89,6 +89,20 @@
         {% if status.qiniu_configured %}已接入{% else %}未配置{% endif %}
       </div>
     </div>
+    <div class="card">
+      <h2>WebSocket</h2>
+      <div class="value {% if status.channels_enabled %}ok{% else %}warn{% endif %}">
+        {% if status.channels_enabled %}已启用{% else %}已关闭{% endif %}
+      </div>
+      <div class="sub">{{ status.websocket_path }} · Channel: {{ status.channel_layer }}</div>
+    </div>
+    <div class="card">
+      <h2>Redis</h2>
+      <div class="value {% if status.redis.connected %}ok{% elif status.redis.enabled %}warn{% else %}warn{% endif %}">
+        {% if status.redis.connected %}已连接{% elif status.redis.enabled %}未连接{% else %}未配置{% endif %}
+      </div>
+      <div class="sub">会话 {{ status.session_backend }} · Channel {{ status.channel_layer }}{% if status.redis.used_memory_human %} · {{ status.redis.used_memory_human }}{% endif %}</div>
+    </div>
   </div>
 
   <div class="section">

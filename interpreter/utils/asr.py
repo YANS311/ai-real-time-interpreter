@@ -41,6 +41,17 @@ def _get_model():
         return _model
 
 
+def warm_up_whisper() -> bool:
+    """预加载 Whisper 模型，降低首包延迟。"""
+    try:
+        _get_model()
+        logger.info("Whisper model warmed up")
+        return True
+    except Exception as e:
+        logger.warning("Whisper warm-up failed: %s", e)
+        return False
+
+
 def transcribe_pcm(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
