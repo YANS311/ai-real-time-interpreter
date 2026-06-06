@@ -519,6 +519,9 @@
     const subtitles = [];
     let mediaRecorder = null;
     let micStream = null;
+    let micAudioCtx = null;
+    let micProcessor = null;
+    let micPcmBuffer = [];
     let pendingRequests = 0;
     let selectedVideoFile = null;
     let inputMode = "mic";
@@ -1300,29 +1303,69 @@
         setStatus("无法访问麦克风: " + e.message, "error");
         return;
       }
-      const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus") ? "audio/webm;codecs=opus" : "audio/webm";
-      mediaRecorder = new MediaRecorder(micStream, { mimeType: mime });
-      mediaRecorder.ondataavailable = async (ev) => {
-        if (!ev.data.size) return;
-        try {
-          await handleResponse(await sendChunk(ev.data, "webm"));
-        } catch (e) { setStatus("传输失败: " + e.message, "error"); }
+      // 使用 Web Audio API 直接采集 raw PCM，避免 webm 分片解码失败
+      micAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      const source = micAudioCtx.createMediaStreamSource(micStream);
+      // buffer size 4096 ≈ 256ms @16kHz，每 300ms 发一包
+      micProcessor = micAudioCtx.createScriptProcessor(4096, 1, 1);
+      micPcmBuffer = [];
+      const samplesPerChunk = Math.round(16000 * CHUNK_INTERVAL_MS / 1000);
+      micProcessor.onaudioprocess = (e) => {
+        if (!micProcessor) return;
+        const ch = e.inputBuffer.getChannelData(0);
+        for (let i = 0; i < ch.length; i++) micPcmBuffer.push(ch[i]);
+        if (micPcmBuffer.length >= samplesPerChunk) {
+          const samples = micPcmBuffer.splice(0, samplesPerChunk);
+          const buf = new Float32Array(samples);
+          const blob = new Blob([buf], { type: "application/octet-stream" });
+          const fd = new FormData();
+          fd.append("audio", blob, "chunk.pcm");
+          fd.append("format", "pcm_float");
+          fd.append("sample_rate", "16000");
+          fd.append("session_id", sessionId);
+          fd.append("source_lang", el.sourceLang.value);
+          fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
+          fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
+          fd.append("separation_method", "auto");
+          appendPipelineOptions(fd);
+          fetch("/api/audio/chunk/", { method: "POST", body: fd })
+            .then(r => r.json())
+            .then(data => handleResponse(data))
+            .catch(err => setStatus("传输失败: " + err.message, "error"));
+        }
       };
-      mediaRecorder.start(CHUNK_INTERVAL_MS);
+      source.connect(micProcessor);
+      micProcessor.connect(micAudioCtx.destination);
       el.btnMic.disabled = true;
       el.btnStop.disabled = false;
-      setStatus("麦克风同传中 · " + CHUNK_INTERVAL_MS + "ms 分片", "live");
+      setStatus("麦克风同传中 · PCM " + CHUNK_INTERVAL_MS + "ms 分片", "live");
     }
 
     async function stopMic() {
-      if (mediaRecorder?.state !== "inactive") {
-        mediaRecorder.stop();
-        await new Promise((r) => (mediaRecorder.onstop = r));
-        try { await handleResponse(await sendChunk(new Blob(), "webm", true)); } catch (_) {}
+      // 发送剩余 PCM 缓冲
+      if (micPcmBuffer.length > 0) {
+        const samples = micPcmBuffer.splice(0);
+        const buf = new Float32Array(samples);
+        const blob = new Blob([buf], { type: "application/octet-stream" });
+        const fd = new FormData();
+        fd.append("audio", blob, "chunk.pcm");
+        fd.append("format", "pcm_float");
+        fd.append("sample_rate", "16000");
+        fd.append("session_id", sessionId);
+        fd.append("source_lang", el.sourceLang.value);
+        fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
+        fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
+        fd.append("separation_method", "auto");
+        fd.append("flush", "1");
+        appendPipelineOptions(fd);
+        try { await handleResponse(await (await fetch("/api/audio/chunk/", { method: "POST", body: fd })).json()); } catch (_) {}
       }
+      // 清理 Web Audio API
+      if (micProcessor) { micProcessor.disconnect(); micProcessor = null; }
+      if (micAudioCtx) { micAudioCtx.close(); micAudioCtx = null; }
       micStream?.getTracks().forEach((t) => t.stop());
       micStream = null;
-      mediaRecorder = null;
+      micPcmBuffer = [];
       el.btnMic.disabled = false;
       el.btnStop.disabled = true;
       setStatus("已停止");
