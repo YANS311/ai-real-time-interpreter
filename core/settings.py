@@ -100,7 +100,7 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = DATA_UPLOAD_MAX_MEMORY_SIZE
 
 # --- Interpreter service config (from .env) ---
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
-WHISPER_MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", str(BASE_DIR / "models" / "faster-whisper-base"))
+WHISPER_MODEL_PATH = os.getenv("WHISPER_MODEL_PATH", str(BASE_DIR / "models" / f"faster-whisper-{os.getenv('WHISPER_MODEL', 'base')}"))
 WHISPER_DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
 WHISPER_WARMUP = os.getenv("WHISPER_WARMUP", "True").lower() in ("true", "1", "yes")
