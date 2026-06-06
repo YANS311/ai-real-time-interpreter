@@ -32,7 +32,7 @@ JSON格式：
 
 def _call_llm(messages: list[dict]) -> str:
     """调用 OpenAI 兼容 API。"""
-    return call_llm(messages, temperature=0.3, json_mode=True, max_tokens=512)
+    return call_llm(messages, temperature=0.1, json_mode=True, max_tokens=256)
 
 
 def _parse_llm_json(raw: str) -> dict:
