@@ -102,8 +102,8 @@ def transcribe_pcm(
         language=language,
         vad_filter=True,
         vad_parameters=dict(
-            min_silence_duration_ms=200,
-            speech_pad_ms=300,
+            min_silence_duration_ms=500,
+            speech_pad_ms=400,
         ),
         beam_size=3,
         best_of=2,

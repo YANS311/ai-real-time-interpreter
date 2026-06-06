@@ -57,14 +57,14 @@ def _hy_mt2_translate(text: str, history: list[dict] | None = None) -> str:
     import torch
 
     # 构建带上下文的消息
-    messages = []
+    system_msg = "你是同声传译员。将英文翻译为简洁口语化的中文，保持上下文连贯。"
+    messages = [{"role": "system", "content": system_msg}]
     if history:
-        # 最近 3 条历史作为上下文
         for h in history[-3:]:
             if h.get("source") and h.get("target"):
-                messages.append({"role": "user", "content": f"Translate to Chinese: {h['source']}"})
+                messages.append({"role": "user", "content": h["source"]})
                 messages.append({"role": "assistant", "content": h["target"]})
-    messages.append({"role": "user", "content": f"Translate to Chinese: {text}"})
+    messages.append({"role": "user", "content": text})
 
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
