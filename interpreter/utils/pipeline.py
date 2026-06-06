@@ -129,13 +129,10 @@ def process_audio_segment(
 
     def _work() -> dict[str, Any]:
         nonlocal segment_duration_sec
-        # 构建 initial_prompt：带标点引导，帮助 ASR 输出完整句子
-        punct_guide = "Use proper punctuation: periods, commas, question marks. End sentences with periods."
+        # 构建 initial_prompt：只传历史文本，帮助 Whisper 保持上下文连贯
+        # 注意：不能传英文指令，Whisper 会把它当成语音内容识别出来
         history_parts = [h.get("source", "") for h in history[-3:] if h.get("source")]
-        if history_parts:
-            initial_prompt = punct_guide + " " + " ".join(history_parts)
-        else:
-            initial_prompt = punct_guide
+        initial_prompt = " ".join(history_parts) if history_parts else None
         asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang, initial_prompt=initial_prompt)
         source_text = (asr.get("text") or "").strip()
 
