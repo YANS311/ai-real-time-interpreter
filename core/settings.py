@@ -114,8 +114,8 @@ TTS_VOICE = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")
 # In-memory session TTL (seconds)
 SESSION_TTL = int(os.getenv("SESSION_TTL", "3600"))
 
-# 流式音频分片时长（秒），默认 300ms 低延迟
-AUDIO_CHUNK_DURATION_SEC = float(os.getenv("AUDIO_CHUNK_DURATION_SEC", "0.3"))
+# 流式音频分片时长（秒），默认 200ms 低延迟
+AUDIO_CHUNK_DURATION_SEC = float(os.getenv("AUDIO_CHUNK_DURATION_SEC", "0.2"))
 
 # 管线超时（秒）
 PIPELINE_TIMEOUT_SEC = int(os.getenv("PIPELINE_TIMEOUT_SEC", "120"))

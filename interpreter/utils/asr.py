@@ -76,6 +76,7 @@ def transcribe_pcm(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
     language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
 ) -> dict:
     """
     对一段 PCM 音频做识别，返回文本与是否偏「最终结果」。
@@ -110,6 +111,7 @@ def transcribe_pcm(
         no_speech_threshold=0.6,
         log_prob_threshold=-1.0,
         compression_ratio_threshold=2.4,
+        initial_prompt=initial_prompt or None,
     )
 
     parts = []
@@ -145,13 +147,14 @@ def transcribe_stream_chunk(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
     language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
 ) -> dict:
     """
     流式分片入口：对当前缓冲片段识别。
     空音频返回空结果，不抛错。
     """
     try:
-        return transcribe_pcm(pcm_bytes, sample_rate, language=language)
+        return transcribe_pcm(pcm_bytes, sample_rate, language=language, initial_prompt=initial_prompt)
     except Exception as e:
         logger.exception("ASR failed: %s", e)
         return {

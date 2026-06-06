@@ -15,9 +15,9 @@ _CLAUSE_END = re.compile(r"[,，、]\s*$")
 _NEWLINE = re.compile(r"\n\s*$")
 
 # 最大缓冲字符数（超过则强制断句，防止无限攒文本）
-MAX_BUFFER_CHARS = 200
+MAX_BUFFER_CHARS = 120
 # 最大缓冲时间（秒），超过则强制翻译
-MAX_BUFFER_SEC = 5.0
+MAX_BUFFER_SEC = 2.5
 
 
 def is_sentence_complete(text: str) -> bool:
@@ -37,7 +37,7 @@ def is_sentence_complete(text: str) -> bool:
 def is_clause_complete(text: str) -> bool:
     """检测是否有子句边界（逗号等），文本够长时视为可翻译。"""
     text = text.strip()
-    if len(text) < 20:
+    if len(text) < 10:
         return False
     if _CLAUSE_END.search(text):
         return True

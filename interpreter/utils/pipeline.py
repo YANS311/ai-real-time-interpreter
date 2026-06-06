@@ -41,12 +41,12 @@ def _submit_work(fn):
         return _executor.submit(fn)
 
 
-def _run_asr(segment: bytes, sample_rate: int, language: Optional[str]) -> dict:
+def _run_asr(segment: bytes, sample_rate: int, language: Optional[str], initial_prompt: Optional[str] = None) -> dict:
     breaker = get_asr_breaker()
     if breaker.is_open():
         return {"text": "", "language": "", "is_partial": True, "circuit_open": True}
     try:
-        result = transcribe_stream_chunk(segment, sample_rate, language=language)
+        result = transcribe_stream_chunk(segment, sample_rate, language=language, initial_prompt=initial_prompt)
         if result.get("error"):
             breaker.record_failure()
         else:
@@ -126,7 +126,10 @@ def process_audio_segment(
 
     def _work() -> dict[str, Any]:
         nonlocal segment_duration_sec
-        asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang)
+        # 构建 initial_prompt：取最近 3 条历史的原文，帮助 Whisper 保持上下文
+        prompt_parts = [h.get("source", "") for h in history[-3:] if h.get("source")]
+        initial_prompt = " ".join(prompt_parts) if prompt_parts else None
+        asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang, initial_prompt=initial_prompt)
         source_text = (asr.get("text") or "").strip()
 
         result: dict[str, Any] = {
