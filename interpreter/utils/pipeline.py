@@ -126,8 +126,8 @@ def process_audio_segment(
 
     def _work() -> dict[str, Any]:
         nonlocal segment_duration_sec
-        # 构建 initial_prompt：取最近 3 条历史的原文，帮助 Whisper 保持上下文
-        prompt_parts = [h.get("source", "") for h in history[-3:] if h.get("source")]
+        # 构建 initial_prompt：取最近 5 条历史的原文，帮助 small 模型保持上下文连贯
+        prompt_parts = [h.get("source", "") for h in history[-5:] if h.get("source")]
         initial_prompt = " ".join(prompt_parts) if prompt_parts else None
         asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang, initial_prompt=initial_prompt)
         source_text = (asr.get("text") or "").strip()

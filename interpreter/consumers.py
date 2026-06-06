@@ -119,11 +119,17 @@ class InterpreterConsumer(AsyncWebsocketConsumer):
     async def _handle_audio_chunk(self, data: dict) -> None:
         """通过 WebSocket 接收音频分片并处理。"""
         try:
+            logger.info("WS audio_chunk session=%s fmt=%s data_len=%s flush=%s",
+                         self.session_id, data.get("format"), len(data.get("data", "")), data.get("flush"))
             result = await sync_to_async(_process_audio_chunk_sync, thread_sensitive=False)(
                 self.session_id, data,
             )
             if result:
+                logger.info("WS audio_chunk result type=%s has_subtitle=%s has_history=%s latency=%s",
+                             result.get("type"), bool(result.get("subtitle")), bool(result.get("history")), result.get("latency_ms"))
                 await self.send(text_data=json.dumps(result, ensure_ascii=False))
+            else:
+                logger.info("WS audio_chunk: result is None (no segment ready)")
         except Exception as e:
             logger.exception("WS audio chunk failed: %s", e)
 

@@ -135,4 +135,14 @@ PPT_CONTEXT_MAX_CHARS = int(os.getenv("PPT_CONTEXT_MAX_CHARS", "4000"))
 QINIU_ACCESS_KEY = os.getenv("QINIU_ACCESS_KEY", "")
 QINIU_SECRET_KEY = os.getenv("QINIU_SECRET_KEY", "")
 QINIU_BUCKET = os.getenv("QINIU_BUCKET", "")
-QINIU_DOMAIN = os.getenv("QINIU_DOMAIN", "")  # 如 https://cdn.example.com
+QINIU_DOMAIN = os.getenv("QINIU_DOMAIN", "")
+
+# 日志配置
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {"console": {"class": "logging.StreamHandler"}},
+    "loggers": {
+        "interpreter": {"handlers": ["console"], "level": "INFO"},
+    },
+}  # 如 https://cdn.example.com
