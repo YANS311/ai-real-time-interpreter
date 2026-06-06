@@ -26,9 +26,19 @@ _executor: ThreadPoolExecutor | None = None
 
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
-    if _executor is None or _executor._shutdown:
+    if _executor is None:
         _executor = ThreadPoolExecutor(max_workers=4)
     return _executor
+
+
+def _submit_work(fn):
+    """提交任务到线程池，shutdown 后自动重建 executor 重试。"""
+    global _executor
+    try:
+        return _get_executor().submit(fn)
+    except RuntimeError:
+        _executor = ThreadPoolExecutor(max_workers=4)
+        return _executor.submit(fn)
 
 
 def _run_asr(segment: bytes, sample_rate: int, language: Optional[str]) -> dict:
@@ -219,5 +229,5 @@ def process_audio_segment(
     if blocking:
         return _work()
 
-    future = _get_executor().submit(_work)
+    future = _submit_work(_work)
     return future.result(timeout=settings.PIPELINE_TIMEOUT_SEC)
