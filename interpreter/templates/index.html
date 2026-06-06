@@ -149,13 +149,19 @@
     }
     .video-preview-wrap video { width: 100%; max-height: 220px; display: block; }
     .progress-wrap {
-      width: 100%; height: 6px; background: var(--card2);
-      border-radius: 99px; overflow: hidden; display: none;
+      width: 100%; background: var(--card2); border-radius: 8px;
+      overflow: hidden; display: none; position: relative;
     }
     .progress-wrap.show { display: block; }
     .progress-bar {
-      height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2));
-      transition: width 0.15s ease;
+      height: 22px; width: 0%; background: linear-gradient(90deg, var(--accent), var(--accent2));
+      transition: width 0.25s ease; min-width: 0;
+    }
+    .progress-label {
+      position: absolute; top: 0; left: 0; right: 0; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; font-weight: 600; color: #fff; pointer-events: none;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.5);
     }
     .subtitle-list {
       flex: 1;
@@ -347,6 +353,7 @@
       </div>
       <div class="progress-wrap" id="progressWrap">
         <div class="progress-bar" id="progressBar"></div>
+        <div class="progress-label" id="progressLabel"></div>
       </div>
       <div class="playback-bar" id="playbackBar">
         <span id="playbackTime">0:00 / 0:00</span>
@@ -530,6 +537,7 @@
       videoPreviewWrap: document.getElementById("videoPreviewWrap"),
       progressWrap: document.getElementById("progressWrap"),
       progressBar: document.getElementById("progressBar"),
+      progressLabel: document.getElementById("progressLabel"),
       panelMic: document.getElementById("panelMic"),
       panelVideo: document.getElementById("panelVideo"),
       btnClear: document.getElementById("btnClear"),
@@ -1142,10 +1150,11 @@
       renderSubtitles();
     }
 
-    function setProgress(pct) {
+    function setProgress(pct, label) {
       el.progressWrap.classList.toggle("show", pct > 0 && pct < 100);
       el.progressBar.style.width = pct + "%";
-      if (pct >= 100) setTimeout(() => el.progressWrap.classList.remove("show"), 600);
+      if (el.progressLabel) el.progressLabel.textContent = label ? (label + " " + Math.round(pct) + "%") : (Math.round(pct) + "%");
+      if (pct >= 100) setTimeout(() => { el.progressWrap.classList.remove("show"); if (el.progressLabel) el.progressLabel.textContent = ""; }, 800);
     }
 
     function uploadWithProgress(url, formData) {
@@ -1154,7 +1163,7 @@
         xhr.open("POST", url);
         xhr.setRequestHeader("X-Session-Id", sessionId);
         xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100));
+          if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100), "上传中");
         };
         xhr.onload = () => {
           setProgress(100);
@@ -1234,7 +1243,7 @@
       fd.append("separation_method", "auto");
       const gloss = getGlossaryPayload();
       if (gloss) fd.append("glossary", gloss);
-      setProgress(1);
+      setProgress(1, "上传中");
       const data = await uploadWithProgress(API_VIDEO_INGEST, fd);
       if (data.session_id) {
         sessionId = data.session_id;
@@ -1268,6 +1277,10 @@
           continue;
         }
         await handleResponse(data);
+        // 更新进度条：服务端识别进度
+        if (data.progress?.has_file) {
+          setProgress(data.progress.percent || 0, "识别中");
+        }
         if (data.file_eof) break;
         await new Promise((r) => setTimeout(r, 20));
       }
@@ -1275,6 +1288,7 @@
         const tail = await pullProcessed(true);
         await handleResponse(tail);
       }
+      setProgress(100, "完成");
       el.btnVideoPause.disabled = true;
       el.btnVideoPause.textContent = "暂停";
     }
