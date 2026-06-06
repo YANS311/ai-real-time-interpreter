@@ -108,9 +108,9 @@ def transcribe_pcm(
         beam_size=3,
         best_of=2,
         condition_on_previous_text=True,
-        no_speech_threshold=0.6,
-        log_prob_threshold=-1.0,
-        compression_ratio_threshold=2.4,
+        no_speech_threshold=0.8,
+        log_prob_threshold=-1.5,
+        compression_ratio_threshold=2.0,
         initial_prompt=initial_prompt or None,
     )
 
@@ -118,15 +118,18 @@ def transcribe_pcm(
     seg_list = []
     for seg in segments_iter:
         t = seg.text.strip()
-        if t:
+        # 过滤低置信度段：no_speech_prob > 0.7 或 avg_logprob < -2.0 的段大概率是幻觉
+        no_speech = getattr(seg, "no_speech_prob", 0) or 0
+        avg_log = getattr(seg, "avg_logprob", 0) or 0
+        if t and no_speech < 0.7 and avg_log > -2.0:
             parts.append(t)
             seg_list.append(
                 {
                     "start": seg.start,
                     "end": seg.end,
                     "text": t,
-                    "avg_logprob": getattr(seg, "avg_logprob", None),
-                    "no_speech_prob": getattr(seg, "no_speech_prob", None),
+                    "avg_logprob": avg_log,
+                    "no_speech_prob": no_speech,
                 }
             )
 
