@@ -160,7 +160,7 @@ def _process_segment(
     source_lang: str,
     compress_speech_enabled: bool = True,
 ) -> dict:
-    """对一段 PCM 执行 ASR + 翻译管线。"""
+    """对一段 PCM 执行 ASR + 句子断句 + 翻译管线。"""
     seg_dur = len(segment) / (session.sample_rate * 2)
     start_sec = session.processed_duration_sec
 
@@ -186,8 +186,21 @@ def _process_segment(
         ppt_context=session.ppt_context or "",
         compress_speech_enabled=compress_speech_enabled,
         speaker_tracker=session.speaker_tracker,
+        sentence_buffer=session.sentence_buffer,
+        sentence_start_sec=session.sentence_start_sec,
     )
+
+    # 更新 session 的句子缓冲状态
+    if result.get("sentence_flushed"):
+        session.sentence_buffer = ""
+        session.sentence_start_sec = 0.0
+    else:
+        session.sentence_buffer = result.get("sentence_buffer", "")
+        if not session.sentence_start_sec:
+            session.sentence_start_sec = start_sec
+
     session.advance_duration(segment)
+    session.last_asr_end_sec = start_sec + seg_dur
     result["session_id"] = session.session_id
     if session.bgm_info:
         result["bgm"] = session.bgm_info

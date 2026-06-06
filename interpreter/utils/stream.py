@@ -49,6 +49,10 @@ class AudioStreamSession:
     chunk_duration_sec: float | None = None
     speaker_enabled: bool = True
     speaker_tracker: SpeakerTracker = field(default_factory=SpeakerTracker)
+    # 句子级缓冲：攒够一句再翻译
+    sentence_buffer: str = ""
+    sentence_start_sec: float = 0.0
+    last_asr_end_sec: float = 0.0
 
     def effective_chunk_duration(self) -> float:
         if self.chunk_duration_sec is not None:
@@ -192,6 +196,9 @@ class AudioStreamSession:
         self.history.clear()
         self.bgm_info = {}
         self.speaker_tracker.reset()
+        self.sentence_buffer = ""
+        self.sentence_start_sec = 0.0
+        self.last_asr_end_sec = 0.0
         self.touch()
 
 
