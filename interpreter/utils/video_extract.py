@@ -44,7 +44,11 @@ def load_media_segment(raw: bytes, filename: str) -> AudioSegment:
     ext = get_extension(filename).lstrip(".") or "mp4"
     if not is_supported_media(filename):
         logger.warning("unknown extension %s, trying ffmpeg auto-decode", ext)
-    return AudioSegment.from_file(io.BytesIO(raw), format=ext)
+    try:
+        return AudioSegment.from_file(io.BytesIO(raw), format=ext)
+    except Exception:
+        logger.info("decode with format=%s failed, retrying without format hint", ext)
+        return AudioSegment.from_file(io.BytesIO(raw))
 
 
 def segment_to_pcm(segment: AudioSegment, sample_rate: int = 16000) -> bytes:
