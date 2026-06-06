@@ -498,7 +498,7 @@
     const LS_GLOSSARY_KEY = "interpreter_glossary";
     const LS_PPT_CONTEXT_KEY = "interpreter_ppt_context";
     const LS_STYLE_KEY = "interpreter_sub_style";
-    let CHUNK_INTERVAL_MS = 300;
+    let CHUNK_INTERVAL_MS = 200;
     let qualitySamples = [];
     let saveHistoryTimer = null;
     let demoRunning = false;
@@ -1303,10 +1303,9 @@
         setStatus("无法访问麦克风: " + e.message, "error");
         return;
       }
-      // 使用 Web Audio API 直接采集 raw PCM，避免 webm 分片解码失败
+      // 使用 Web Audio API 直接采集 raw PCM，通过 WebSocket 发送（避免 HTTP 开销）
       micAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       const source = micAudioCtx.createMediaStreamSource(micStream);
-      // buffer size 4096 ≈ 256ms @16kHz，每 300ms 发一包
       micProcessor = micAudioCtx.createScriptProcessor(4096, 1, 1);
       micPcmBuffer = [];
       const samplesPerChunk = Math.round(16000 * CHUNK_INTERVAL_MS / 1000);
@@ -1317,48 +1316,48 @@
         if (micPcmBuffer.length >= samplesPerChunk) {
           const samples = micPcmBuffer.splice(0, samplesPerChunk);
           const buf = new Float32Array(samples);
-          const blob = new Blob([buf], { type: "application/octet-stream" });
-          const fd = new FormData();
-          fd.append("audio", blob, "chunk.pcm");
-          fd.append("format", "pcm_float");
-          fd.append("sample_rate", "16000");
-          fd.append("session_id", sessionId);
-          fd.append("source_lang", el.sourceLang.value);
-          fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
-          fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
-          fd.append("separation_method", "auto");
-          appendPipelineOptions(fd);
-          fetch("/api/audio/chunk/", { method: "POST", body: fd })
-            .then(r => r.json())
-            .then(data => handleResponse(data))
-            .catch(err => setStatus("传输失败: " + err.message, "error"));
+          // 转 base64 通过 WebSocket 发送
+          const bytes = new Uint8Array(buf.buffer);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          const b64 = btoa(binary);
+          if (wsSocket && wsSocket.readyState === WebSocket.OPEN) {
+            wsSocket.send(JSON.stringify({
+              action: "audio_chunk",
+              format: "pcm_float",
+              data: b64,
+              sample_rate: 16000,
+              source_lang: el.sourceLang.value,
+              compress_speech: el.chkCompress?.checked ? "1" : "0",
+              speaker_labels: el.chkSpeaker?.checked ? "1" : "0",
+            }));
+          }
         }
       };
       source.connect(micProcessor);
       micProcessor.connect(micAudioCtx.destination);
       el.btnMic.disabled = true;
       el.btnStop.disabled = false;
-      setStatus("麦克风同传中 · PCM " + CHUNK_INTERVAL_MS + "ms 分片", "live");
+      setStatus("麦克风同传中 · WS PCM " + CHUNK_INTERVAL_MS + "ms", "live");
     }
 
     async function stopMic() {
-      // 发送剩余 PCM 缓冲
-      if (micPcmBuffer.length > 0) {
+      // 发送剩余 PCM 缓冲 + flush
+      if (micPcmBuffer.length > 0 && wsSocket && wsSocket.readyState === WebSocket.OPEN) {
         const samples = micPcmBuffer.splice(0);
         const buf = new Float32Array(samples);
-        const blob = new Blob([buf], { type: "application/octet-stream" });
-        const fd = new FormData();
-        fd.append("audio", blob, "chunk.pcm");
-        fd.append("format", "pcm_float");
-        fd.append("sample_rate", "16000");
-        fd.append("session_id", sessionId);
-        fd.append("source_lang", el.sourceLang.value);
-        fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
-        fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
-        fd.append("separation_method", "auto");
-        fd.append("flush", "1");
-        appendPipelineOptions(fd);
-        try { await handleResponse(await (await fetch("/api/audio/chunk/", { method: "POST", body: fd })).json()); } catch (_) {}
+        const bytes = new Uint8Array(buf.buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        wsSocket.send(JSON.stringify({
+          action: "audio_flush",
+          format: "pcm_float",
+          data: btoa(binary),
+          sample_rate: 16000,
+          source_lang: el.sourceLang.value,
+        }));
+      } else if (wsSocket && wsSocket.readyState === WebSocket.OPEN) {
+        wsSocket.send(JSON.stringify({ action: "audio_flush" }));
       }
       // 清理 Web Audio API
       if (micProcessor) { micProcessor.disconnect(); micProcessor = null; }
@@ -1498,9 +1497,9 @@
     });
     loadSubtitleStyle();
     el.modeSelect.addEventListener("change", () => {
-      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 800 : 300;
+      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 500 : 200;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
-      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 300 ? "低延迟(300ms)" : "高准确率(800ms)") + "模式");
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 200 ? "低延迟(200ms)" : "高准确率(500ms)") + "模式");
     });
     async function runDemoMode() {
       if (demoRunning) return;
