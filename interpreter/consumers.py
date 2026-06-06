@@ -188,6 +188,14 @@ def _process_audio_chunk_sync(session_id: str, data: dict) -> dict | None:
     flush = data.get("flush", False)
     compress_speech_enabled = data.get("compress_speech", True)
 
+    # 支持前端传入分片时长（秒），灵活调整 ASR 分片
+    chunk_dur = data.get("chunk_duration_sec")
+    if chunk_dur is not None:
+        try:
+            session.chunk_duration_sec = max(0.1, min(3.0, float(chunk_dur)))
+        except (TypeError, ValueError):
+            pass
+
     # 解码音频
     fmt = data.get("format", "pcm_float")
     audio_b64 = data.get("data", "")

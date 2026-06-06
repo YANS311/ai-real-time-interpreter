@@ -323,7 +323,7 @@
       <span class="metric-pill">质量 <strong id="qualityScore">--</strong></span>
       <span class="metric-pill">信噪比 <strong id="snrDb">--</strong> dB</span>
       <span class="metric-pill">均延迟 <strong id="avgLatency">--</strong> ms</span>
-      <span class="metric-pill">分片 <strong id="chunkMs">500</strong> ms</span>
+      <span class="metric-pill">分片 <strong id="chunkMs">1000</strong> ms</span>
       <span class="metric-pill" id="bgmPill">BGM <strong id="bgmStatus">--</strong></span>
       <span class="metric-pill" id="wsPill">WS <strong id="wsStatus">--</strong></span>
     </div>
@@ -404,8 +404,9 @@
       <label>
         模式
         <select id="modeSelect" class="lang-select">
-          <option value="low">低延迟（直播/麦克风 300ms）</option>
-          <option value="high">高准确率（视频文件 500ms）</option>
+          <option value="low">低延迟（直播 500ms）</option>
+          <option value="mid" selected>均衡（麦克风 1000ms）</option>
+          <option value="high">高准确率（视频文件 2000ms）</option>
         </select>
       </label>
     </div>
@@ -498,7 +499,7 @@
     const LS_GLOSSARY_KEY = "interpreter_glossary";
     const LS_PPT_CONTEXT_KEY = "interpreter_ppt_context";
     const LS_STYLE_KEY = "interpreter_sub_style";
-    let CHUNK_INTERVAL_MS = 500;
+    let CHUNK_INTERVAL_MS = 1000;
     let qualitySamples = [];
     let saveHistoryTimer = null;
     let demoRunning = false;
@@ -1328,6 +1329,7 @@
               data: b64,
               sample_rate: 16000,
               source_lang: el.sourceLang.value,
+              chunk_duration_sec: CHUNK_INTERVAL_MS / 1000,
               compress_speech: el.chkCompress?.checked ? "1" : "0",
               speaker_labels: el.chkSpeaker?.checked ? "1" : "0",
             }));
@@ -1497,9 +1499,10 @@
     });
     loadSubtitleStyle();
     el.modeSelect.addEventListener("change", () => {
-      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 1000 : 500;
+      const v = el.modeSelect.value;
+      CHUNK_INTERVAL_MS = v === "low" ? 500 : v === "high" ? 2000 : 1000;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
-      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 500 ? "均衡(500ms)" : "高准确率(1000ms)") + "模式");
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 500 ? "低延迟(500ms)" : CHUNK_INTERVAL_MS === 2000 ? "高准确率(2000ms)" : "均衡(1000ms)") + "模式");
     });
     async function runDemoMode() {
       if (demoRunning) return;
