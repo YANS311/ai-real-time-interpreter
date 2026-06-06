@@ -5,23 +5,22 @@ from __future__ import annotations
 
 import re
 
-# 英文句末标点
+# 英文句末标点（强边界）
 _SENTENCE_END_EN = re.compile(r"[.!?;]\s*$")
 # 中文句末标点
 _SENTENCE_END_ZH = re.compile(r"[。！？；…]\s*$")
-# 逗号/顿号（弱边界，文本够长时也触发）
+# 逗号/顿号（弱边界，仅文本较长时才触发）
 _CLAUSE_END = re.compile(r"[,，、]\s*$")
-# 换行（ASR 输出中的段落分隔）
+# 换行
 _NEWLINE = re.compile(r"\n\s*$")
 
-# 最大缓冲字符数（超过则强制断句，防止无限攒文本）
-MAX_BUFFER_CHARS = 120
-# 最大缓冲时间（秒），超过则强制翻译
-MAX_BUFFER_SEC = 2.5
+# 强制断句阈值
+MAX_BUFFER_CHARS = 150
+MAX_BUFFER_SEC = 3.0
 
 
 def is_sentence_complete(text: str) -> bool:
-    """检测文本是否包含完整的句子边界。"""
+    """检测文本是否包含完整的句子边界（句号/问号/感叹号/分号）。"""
     text = text.strip()
     if not text:
         return False
@@ -35,9 +34,9 @@ def is_sentence_complete(text: str) -> bool:
 
 
 def is_clause_complete(text: str) -> bool:
-    """检测是否有子句边界（逗号等），文本够长时视为可翻译。"""
+    """逗号边界：仅当文本较长（>=20字符）且以逗号结尾时才触发。"""
     text = text.strip()
-    if len(text) < 10:
+    if len(text) < 20:
         return False
     if _CLAUSE_END.search(text):
         return True
@@ -49,10 +48,10 @@ def should_flush(text: str, buffer_sec: float) -> bool:
     text = text.strip()
     if not text:
         return False
-    # 完整句子 → 立即翻译
+    # 完整句子（句号/问号/感叹号）→ 立即翻译
     if is_sentence_complete(text):
         return True
-    # 子句边界 + 文本够长 → 翻译
+    # 长逗号子句（>=20字）→ 翻译
     if is_clause_complete(text):
         return True
     # 缓冲超长 → 强制翻译
