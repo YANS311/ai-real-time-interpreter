@@ -323,7 +323,7 @@
       <span class="metric-pill">质量 <strong id="qualityScore">--</strong></span>
       <span class="metric-pill">信噪比 <strong id="snrDb">--</strong> dB</span>
       <span class="metric-pill">均延迟 <strong id="avgLatency">--</strong> ms</span>
-      <span class="metric-pill">分片 <strong id="chunkMs">200</strong> ms</span>
+      <span class="metric-pill">分片 <strong id="chunkMs">500</strong> ms</span>
       <span class="metric-pill" id="bgmPill">BGM <strong id="bgmStatus">--</strong></span>
       <span class="metric-pill" id="wsPill">WS <strong id="wsStatus">--</strong></span>
     </div>
@@ -498,7 +498,7 @@
     const LS_GLOSSARY_KEY = "interpreter_glossary";
     const LS_PPT_CONTEXT_KEY = "interpreter_ppt_context";
     const LS_STYLE_KEY = "interpreter_sub_style";
-    let CHUNK_INTERVAL_MS = 200;
+    let CHUNK_INTERVAL_MS = 500;
     let qualitySamples = [];
     let saveHistoryTimer = null;
     let demoRunning = false;
@@ -1497,9 +1497,9 @@
     });
     loadSubtitleStyle();
     el.modeSelect.addEventListener("change", () => {
-      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 500 : 200;
+      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 1000 : 500;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
-      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 200 ? "低延迟(200ms)" : "高准确率(500ms)") + "模式");
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 500 ? "均衡(500ms)" : "高准确率(1000ms)") + "模式");
     });
     async function runDemoMode() {
       if (demoRunning) return;

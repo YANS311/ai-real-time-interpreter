@@ -129,9 +129,13 @@ def process_audio_segment(
 
     def _work() -> dict[str, Any]:
         nonlocal segment_duration_sec
-        # 构建 initial_prompt：取最近 5 条历史的原文，帮助 small 模型保持上下文连贯
-        prompt_parts = [h.get("source", "") for h in history[-5:] if h.get("source")]
-        initial_prompt = " ".join(prompt_parts) if prompt_parts else None
+        # 构建 initial_prompt：带标点引导，帮助 ASR 输出完整句子
+        punct_guide = "Use proper punctuation: periods, commas, question marks. End sentences with periods."
+        history_parts = [h.get("source", "") for h in history[-3:] if h.get("source")]
+        if history_parts:
+            initial_prompt = punct_guide + " " + " ".join(history_parts)
+        else:
+            initial_prompt = punct_guide
         asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang, initial_prompt=initial_prompt)
         source_text = (asr.get("text") or "").strip()
 
