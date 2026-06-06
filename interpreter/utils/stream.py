@@ -235,11 +235,37 @@ def save_session(session: AudioStreamSession) -> None:
 def webm_to_pcm(webm_bytes: bytes, target_rate: int = 16000) -> bytes:
     """
     将浏览器 MediaRecorder 输出的 webm/opus 转为 16kHz PCM。
-    需要 pydub + ffmpeg。
+    优先用 ffmpeg 子进程直接转码（更可靠），失败时降级 pydub。
     """
-    from pydub import AudioSegment
+    import subprocess
+    import shutil
 
-    audio = AudioSegment.from_file(io.BytesIO(webm_bytes))
+    if not webm_bytes or len(webm_bytes) < 100:
+        return b""
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:
+            proc = subprocess.run(
+                [
+                    ffmpeg, "-hide_banner", "-loglevel", "error",
+                    "-f", "webm", "-i", "pipe:0",
+                    "-f", "s16le", "-acodec", "pcm_s16le",
+                    "-ar", str(target_rate), "-ac", "1",
+                    "pipe:1",
+                ],
+                input=webm_bytes,
+                capture_output=True,
+                timeout=10,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return proc.stdout
+        except Exception:
+            pass
+
+    # 降级：pydub
+    from pydub import AudioSegment
+    audio = AudioSegment.from_file(io.BytesIO(webm_bytes), format="webm")
     audio = audio.set_frame_rate(target_rate).set_channels(1).set_sample_width(2)
     return audio.raw_data
 
