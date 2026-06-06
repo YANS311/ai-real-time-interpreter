@@ -60,7 +60,7 @@ def _hy_mt2_translate(text: str, history: list[dict] | None = None) -> str:
     system_msg = "你是同声传译员。将英文翻译为简洁口语化的中文，保持上下文连贯。"
     messages = [{"role": "system", "content": system_msg}]
     if history:
-        for h in history[-3:]:
+        for h in history[-5:]:
             if h.get("source") and h.get("target"):
                 messages.append({"role": "user", "content": h["source"]})
                 messages.append({"role": "assistant", "content": h["target"]})

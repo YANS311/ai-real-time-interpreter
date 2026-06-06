@@ -34,9 +34,9 @@ def is_sentence_complete(text: str) -> bool:
 
 
 def is_clause_complete(text: str) -> bool:
-    """逗号边界：仅当文本较长（>=10字符）且以逗号结尾时才触发。"""
+    """逗号边界：仅当文本较长（>=15字符）且以逗号结尾时才触发。"""
     text = text.strip()
-    if len(text) < 10:
+    if len(text) < 15:
         return False
     if _CLAUSE_END.search(text):
         return True

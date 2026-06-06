@@ -131,7 +131,7 @@ def process_audio_segment(
         nonlocal segment_duration_sec
         # 构建 initial_prompt：只传历史文本，帮助 Whisper 保持上下文连贯
         # 注意：不能传英文指令，Whisper 会把它当成语音内容识别出来
-        history_parts = [h.get("source", "") for h in history[-3:] if h.get("source")]
+        history_parts = [h.get("source", "") for h in history[-5:] if h.get("source")]
         initial_prompt = " ".join(history_parts) if history_parts else None
         asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang, initial_prompt=initial_prompt)
         source_text = (asr.get("text") or "").strip()
