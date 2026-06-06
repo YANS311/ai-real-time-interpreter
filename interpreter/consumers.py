@@ -245,8 +245,6 @@ def _process_audio_chunk_sync(session_id: str, data: dict) -> dict | None:
     result["chunk_duration_ms"] = int(session.effective_chunk_duration() * 1000)
     save_session(session)
 
-    # 通过 WebSocket 推送结果（而不是返回给 HTTP）
-    from .utils.ws_events import push_chunk_result
-    push_chunk_result(session_id, result)
-
-    return {"type": "chunk_result", "processed": True}
+    # 返回结果，由调用方通过 WebSocket 发送（不走 channel layer 避免重复）
+    result["type"] = "chunk_result"
+    return result
