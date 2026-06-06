@@ -26,7 +26,10 @@ _executor: ThreadPoolExecutor | None = None
 
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
-    if _executor is None:
+    try:
+        if _executor is None or _executor._shutdown:
+            _executor = ThreadPoolExecutor(max_workers=4)
+    except AttributeError:
         _executor = ThreadPoolExecutor(max_workers=4)
     return _executor
 
@@ -36,7 +39,7 @@ def _submit_work(fn):
     global _executor
     try:
         return _get_executor().submit(fn)
-    except RuntimeError:
+    except Exception:
         _executor = ThreadPoolExecutor(max_workers=4)
         return _executor.submit(fn)
 
