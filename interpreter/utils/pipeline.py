@@ -21,7 +21,14 @@ from .translate import apply_corrections_to_history, translate_with_correction
 
 logger = logging.getLogger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=4)
+_executor: ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None or _executor._shutdown:
+        _executor = ThreadPoolExecutor(max_workers=4)
+    return _executor
 
 
 def _run_asr(segment: bytes, sample_rate: int, language: Optional[str]) -> dict:
@@ -212,5 +219,5 @@ def process_audio_segment(
     if blocking:
         return _work()
 
-    future = _executor.submit(_work)
+    future = _get_executor().submit(_work)
     return future.result(timeout=settings.PIPELINE_TIMEOUT_SEC)
