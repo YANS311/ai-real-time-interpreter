@@ -1,5 +1,5 @@
 """
-非阻塞流式处理管线：解码 → ASR → 口语压缩 → 翻译纠错，带耗时统计与熔断。
+非阻塞流式处理管线：解码 → ASR → 口语压缩 → 句子断句 → 翻译纠错，带耗时统计与熔断。
 """
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from django.conf import settings
 from .asr import transcribe_stream_chunk
 from .circuit_breaker import get_asr_breaker, get_llm_breaker
 from .quality import compute_segment_quality
+from .segmentation import should_flush
 from .speaker import SpeakerTracker
 from .speech_compressor import compress_speech
 from .correction import history_payload
@@ -20,7 +21,14 @@ from .translate import apply_corrections_to_history, translate_with_correction
 
 logger = logging.getLogger(__name__)
 
-_executor = ThreadPoolExecutor(max_workers=4)
+_executor: ThreadPoolExecutor | None = None
+
+
+def _get_executor() -> ThreadPoolExecutor:
+    global _executor
+    if _executor is None or _executor._shutdown:
+        _executor = ThreadPoolExecutor(max_workers=4)
+    return _executor
 
 
 def _run_asr(segment: bytes, sample_rate: int, language: Optional[str]) -> dict:
@@ -93,9 +101,14 @@ def process_audio_segment(
     ppt_context: str = "",
     compress_speech_enabled: bool = True,
     speaker_tracker: SpeakerTracker | None = None,
+    sentence_buffer: str = "",
+    sentence_start_sec: float = 0.0,
 ) -> dict[str, Any]:
     """
     处理一段 PCM 音频，返回 ASR + 翻译 + 纠错 + 延迟指标。
+
+    句子级断句：ASR 文本先攒到 sentence_buffer，
+    检测到句子边界才送翻译，否则只返回原文预览。
 
     blocking=False 时通过线程池异步执行（适用于仅预热场景）。
     """
@@ -112,14 +125,13 @@ def process_audio_segment(
             "corrections": [],
             "subtitle": None,
             "fallback": False,
+            "sentence_flushed": False,
+            "sentence_buffer": sentence_buffer,
         }
 
         if not source_text:
-            latency = int((time.perf_counter() - started) * 1000)
-            result["latency_ms"] = latency
-            result["quality"] = compute_segment_quality(
-                segment, asr, latency, bgm_info=bgm_info
-            )
+            # 空音频 → 不计延迟，不计质量
+            result["latency_ms"] = 0
             return result
 
         compression = {"text": source_text, "compressed": False, "skipped": True, "reason": "disabled"}
@@ -131,8 +143,31 @@ def process_audio_segment(
         if compression.get("compressed"):
             asr = {**asr, "raw_text": source_text, "text": translate_source}
 
+        # --- 句子级断句：攒够一句再翻译 ---
+        combined = (sentence_buffer + " " + translate_source).strip() if sentence_buffer else translate_source
+        buffer_sec = (segment_start_sec - sentence_start_sec) if sentence_start_sec > 0 else 0.0
+
+        if not should_flush(combined, buffer_sec):
+            # 未到句子边界 → 只返回原文预览，不翻译，不计延迟
+            result["sentence_buffer"] = combined
+            result["subtitle"] = {
+                "source": combined,
+                "source_raw": "",
+                "target": "",
+                "is_partial": True,
+                "start_sec": round(sentence_start_sec or segment_start_sec, 3),
+                "end_sec": round(segment_start_sec + (len(segment) / (sample_rate * 2)), 3),
+                "speaker": None,
+            }
+            result["latency_ms"] = 0
+            return result
+
+        # 到达句子边界 → 翻译完整句子
+        result["sentence_flushed"] = True
+        result["sentence_buffer"] = ""
+
         tr = _run_translate(
-            translate_source,
+            combined,
             history,
             source_lang,
             glossary,
@@ -155,20 +190,20 @@ def process_audio_segment(
             )
 
         result["subtitle"] = {
-            "source": translate_source,
+            "source": combined,
             "source_raw": source_text if translate_source != source_text else "",
             "target": result["translation"],
-            "is_partial": asr.get("is_partial", False),
-            "start_sec": round(segment_start_sec, 3),
+            "is_partial": False,
+            "start_sec": round(sentence_start_sec or segment_start_sec, 3),
             "end_sec": round(end_sec, 3),
             "speaker": speaker,
         }
         history.append(
             {
-                "source": translate_source,
+                "source": combined,
                 "source_raw": source_text if translate_source != source_text else "",
                 "target": result["translation"],
-                "start_sec": round(segment_start_sec, 3),
+                "start_sec": round(sentence_start_sec or segment_start_sec, 3),
                 "end_sec": round(end_sec, 3),
                 "speaker": speaker,
             }
@@ -184,5 +219,5 @@ def process_audio_segment(
     if blocking:
         return _work()
 
-    future = _executor.submit(_work)
+    future = _get_executor().submit(_work)
     return future.result(timeout=settings.PIPELINE_TIMEOUT_SEC)

@@ -49,6 +49,10 @@ class AudioStreamSession:
     chunk_duration_sec: float | None = None
     speaker_enabled: bool = True
     speaker_tracker: SpeakerTracker = field(default_factory=SpeakerTracker)
+    # 句子级缓冲：攒够一句再翻译
+    sentence_buffer: str = ""
+    sentence_start_sec: float = 0.0
+    last_asr_end_sec: float = 0.0
 
     def effective_chunk_duration(self) -> float:
         if self.chunk_duration_sec is not None:
@@ -192,6 +196,9 @@ class AudioStreamSession:
         self.history.clear()
         self.bgm_info = {}
         self.speaker_tracker.reset()
+        self.sentence_buffer = ""
+        self.sentence_start_sec = 0.0
+        self.last_asr_end_sec = 0.0
         self.touch()
 
 
@@ -228,11 +235,37 @@ def save_session(session: AudioStreamSession) -> None:
 def webm_to_pcm(webm_bytes: bytes, target_rate: int = 16000) -> bytes:
     """
     将浏览器 MediaRecorder 输出的 webm/opus 转为 16kHz PCM。
-    需要 pydub + ffmpeg。
+    优先用 ffmpeg 子进程直接转码（更可靠），失败时降级 pydub。
     """
-    from pydub import AudioSegment
+    import subprocess
+    import shutil
 
-    audio = AudioSegment.from_file(io.BytesIO(webm_bytes))
+    if not webm_bytes or len(webm_bytes) < 100:
+        return b""
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg:
+        try:
+            proc = subprocess.run(
+                [
+                    ffmpeg, "-hide_banner", "-loglevel", "error",
+                    "-f", "webm", "-i", "pipe:0",
+                    "-f", "s16le", "-acodec", "pcm_s16le",
+                    "-ar", str(target_rate), "-ac", "1",
+                    "pipe:1",
+                ],
+                input=webm_bytes,
+                capture_output=True,
+                timeout=10,
+            )
+            if proc.returncode == 0 and proc.stdout:
+                return proc.stdout
+        except Exception:
+            pass
+
+    # 降级：pydub
+    from pydub import AudioSegment
+    audio = AudioSegment.from_file(io.BytesIO(webm_bytes), format="webm")
     audio = audio.set_frame_rate(target_rate).set_channels(1).set_sample_width(2)
     return audio.raw_data
 

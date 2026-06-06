@@ -100,9 +100,16 @@ def transcribe_pcm(
         io.BytesIO(wav),
         language=language,
         vad_filter=True,
+        vad_parameters=dict(
+            min_silence_duration_ms=300,
+            speech_pad_ms=200,
+        ),
         beam_size=1,
         best_of=1,
-        condition_on_previous_text=True,
+        condition_on_previous_text=False,
+        no_speech_threshold=0.6,
+        log_prob_threshold=-1.0,
+        compression_ratio_threshold=2.4,
     )
 
     parts = []

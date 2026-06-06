@@ -25,6 +25,7 @@ def get_llm_client() -> httpx.Client:
             _client = httpx.Client(
                 timeout=httpx.Timeout(60.0, connect=10.0),
                 limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+                proxy=None,  # 不走系统代理，避免 SSL 干扰
             )
         return _client
 

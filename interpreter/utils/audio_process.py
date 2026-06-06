@@ -66,7 +66,14 @@ def reduce_noise(
     )
     reduced = np.clip(reduced, -1.0, 1.0)
     int_samples = (reduced * 32767).astype(np.int16)
-    return segment._spawn(int_samples.tobytes()).set_channels(1)
+    raw = int_samples.tobytes()
+    # 直接构造 AudioSegment，避免 _spawn 继承原声道数导致帧不对齐
+    return AudioSegment(
+        data=raw,
+        sample_width=2,
+        frame_rate=segment.frame_rate,
+        channels=1,
+    )
 
 
 def separate_vocals_fast(segment: AudioSegment) -> AudioSegment:
