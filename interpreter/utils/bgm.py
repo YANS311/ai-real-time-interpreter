@@ -96,17 +96,24 @@ def prepare_media_for_interpretation(
     bgm_info["spleeter_available"] = is_spleeter_available()
 
     if separate_bgm and (bgm_info["has_bgm"] or is_video_file(filename)):
-        vocal, proc_meta = separate_vocals(
-            audio,
-            method=separation_method,
-            denoise=denoise,
-        )
-        pcm = _segment_to_mono_pcm(vocal, target_rate)
-        bgm_info["separated"] = True
-        bgm_info.update(proc_meta)
-        method_label = "Spleeter" if proc_meta.get("spleeter_used") else "快速分离"
-        denoise_label = " + 降噪" if proc_meta.get("denoise_applied") else ""
-        bgm_info["message"] = f"已启用人声分离（{method_label}{denoise_label}）"
+        try:
+            vocal, proc_meta = separate_vocals(
+                audio,
+                method=separation_method,
+                denoise=denoise,
+            )
+            pcm = _segment_to_mono_pcm(vocal, target_rate)
+            bgm_info["separated"] = True
+            bgm_info.update(proc_meta)
+            method_label = "Spleeter" if proc_meta.get("spleeter_used") else "快速分离"
+            denoise_label = " + 降噪" if proc_meta.get("denoise_applied") else ""
+            bgm_info["message"] = f"已启用人声分离（{method_label}{denoise_label}）"
+        except Exception as e:
+            logger.warning("Vocal separation failed, using raw audio: %s", e)
+            pcm = raw_pcm
+            bgm_info["separated"] = False
+            bgm_info["separation_error"] = str(e)
+            bgm_info["message"] = "人声分离失败，使用原始音频"
     else:
         pcm = raw_pcm
         if denoise and separate_bgm:
