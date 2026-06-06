@@ -123,11 +123,8 @@ def process_audio_segment(
         }
 
         if not source_text:
-            latency = int((time.perf_counter() - started) * 1000)
-            result["latency_ms"] = latency
-            result["quality"] = compute_segment_quality(
-                segment, asr, latency, bgm_info=bgm_info
-            )
+            # 空音频 → 不计延迟，不计质量
+            result["latency_ms"] = 0
             return result
 
         compression = {"text": source_text, "compressed": False, "skipped": True, "reason": "disabled"}
@@ -144,7 +141,7 @@ def process_audio_segment(
         buffer_sec = (segment_start_sec - sentence_start_sec) if sentence_start_sec > 0 else 0.0
 
         if not should_flush(combined, buffer_sec):
-            # 未到句子边界 → 只返回原文预览，不翻译
+            # 未到句子边界 → 只返回原文预览，不翻译，不计延迟
             result["sentence_buffer"] = combined
             result["subtitle"] = {
                 "source": combined,
@@ -155,8 +152,7 @@ def process_audio_segment(
                 "end_sec": round(segment_start_sec + (len(segment) / (sample_rate * 2)), 3),
                 "speaker": None,
             }
-            latency = int((time.perf_counter() - started) * 1000)
-            result["latency_ms"] = latency
+            result["latency_ms"] = 0
             return result
 
         # 到达句子边界 → 翻译完整句子

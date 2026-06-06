@@ -886,17 +886,20 @@
     }
 
     function updateLatency(ms) {
-      if (typeof ms === "number" && ms >= 0) el.latencyMs.textContent = String(ms);
+      if (typeof ms === "number" && ms > 0) el.latencyMs.textContent = String(ms);
     }
 
     function updateQualityMetrics(quality) {
       if (!quality) return;
       if (quality.score != null) el.qualityScore.textContent = String(quality.score);
       if (quality.snr_db != null) el.snrDb.textContent = String(quality.snr_db);
-      qualitySamples.push({ score: quality.score || 0, latency: quality.latency_ms || 0 });
-      if (qualitySamples.length > 20) qualitySamples.shift();
-      const avg = qualitySamples.reduce((s, q) => s + q.latency, 0) / qualitySamples.length;
-      el.avgLatency.textContent = String(Math.round(avg));
+      // 只有实际翻译过的分片（延迟 > 0）才计入平均延迟
+      if (quality.latency_ms > 0) {
+        qualitySamples.push({ score: quality.score || 0, latency: quality.latency_ms });
+        if (qualitySamples.length > 20) qualitySamples.shift();
+        const avg = qualitySamples.reduce((s, q) => s + q.latency, 0) / qualitySamples.length;
+        el.avgLatency.textContent = String(Math.round(avg));
+      }
     }
 
     function subtitlesToPlainText() {
