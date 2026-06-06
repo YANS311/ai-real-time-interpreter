@@ -397,6 +397,7 @@
       <label><input type="checkbox" id="chkTts" /> 中文语音播报</label>
       <label><input type="checkbox" id="chkPartial" checked /> 显示临时字幕</label>
       <label><input type="checkbox" id="chkBgm" /> BGM 人声分离（视频/文件，麦克风勿开）</label>
+      <label><input type="checkbox" id="chkPlaySource" checked /> 播放源音频</label>
       <label><input type="checkbox" id="chkDenoise" checked /> 环境降噪（风声/杂音）</label>
       <label><input type="checkbox" id="chkBilingual" checked /> 双语字幕（中文在上·原文在下）</label>
       <label><input type="checkbox" id="chkSpeaker" checked /> 说话人标注（A/B 轻量分段）</label>
@@ -548,6 +549,7 @@
       btnExportSrt: document.getElementById("btnExportSrt"),
       btnExportVtt: document.getElementById("btnExportVtt"),
       chkBgm: document.getElementById("chkBgm"),
+      chkPlaySource: document.getElementById("chkPlaySource"),
       chkDenoise: document.getElementById("chkDenoise"),
       chkBilingual: document.getElementById("chkBilingual"),
       modeSelect: document.getElementById("modeSelect"),
@@ -1381,6 +1383,11 @@
       try {
         setStatus("上传并提取音轨: " + file.name, "live");
         await ingestMediaFile(file);
+        // 同步播放源音频
+        if (el.chkPlaySource?.checked && el.videoPreview.src) {
+          el.videoPreview.currentTime = 0;
+          el.videoPreview.play().catch(() => {});
+        }
         setStatus("流式同传识别中…", "live");
         await streamProcessedFile();
         setStatus("视频同传完成" + (el.chkBgm.checked ? "（BGM已分离）" : ""));
@@ -1441,12 +1448,17 @@
     el.btnVideoPause.addEventListener("click", async () => {
       videoStreamPaused = !videoStreamPaused;
       el.btnVideoPause.textContent = videoStreamPaused ? "继续" : "暂停";
+      if (el.chkPlaySource?.checked) {
+        videoStreamPaused ? el.videoPreview.pause() : el.videoPreview.play().catch(() => {});
+      }
       await sessionControl(videoStreamPaused ? "pause" : "resume");
       setStatus(videoStreamPaused ? "视频同传已暂停" : "视频同传继续中", videoStreamPaused ? "warn" : "live");
     });
     el.btnVideoStop.addEventListener("click", async () => {
       videoStreamAborted = true;
       videoStreamPaused = false;
+      el.videoPreview.pause();
+      el.videoPreview.currentTime = 0;
       await sessionControl("stop");
       el.btnVideoStart.disabled = !selectedVideoFile;
       el.btnVideoStop.disabled = true;
