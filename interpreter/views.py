@@ -105,15 +105,15 @@ def _sync_session_chunk_duration(session, request) -> None:
     raw = request.POST.get("chunk_duration") or request.POST.get("chunk_duration_sec")
     if raw:
         try:
-            session.chunk_duration_sec = max(0.1, min(2.0, float(raw)))
+            session.chunk_duration_sec = max(0.1, min(3.0, float(raw)))
             return
         except (TypeError, ValueError):
             pass
     mode = (request.POST.get("accuracy_mode") or "").lower()
     if mode == "high":
-        session.chunk_duration_sec = 0.8
+        session.chunk_duration_sec = 3.0
     elif mode == "low":
-        session.chunk_duration_sec = 0.3
+        session.chunk_duration_sec = 0.5
 
 
 def _upload_too_large_response() -> JsonResponse:

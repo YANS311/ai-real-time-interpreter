@@ -404,9 +404,9 @@
       <label>
         模式
         <select id="modeSelect" class="lang-select">
-          <option value="low">低延迟（直播 500ms）</option>
+          <option value="low">低延迟（直播/麦克风 500ms）</option>
           <option value="mid" selected>均衡（麦克风 1000ms）</option>
-          <option value="high">高准确率（视频文件 2000ms）</option>
+          <option value="high">高准确率（视频/音频文件 3000ms）</option>
         </select>
       </label>
     </div>
@@ -1500,9 +1500,9 @@
     loadSubtitleStyle();
     el.modeSelect.addEventListener("change", () => {
       const v = el.modeSelect.value;
-      CHUNK_INTERVAL_MS = v === "low" ? 500 : v === "high" ? 2000 : 1000;
+      CHUNK_INTERVAL_MS = v === "low" ? 500 : v === "high" ? 3000 : 1000;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
-      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 500 ? "低延迟(500ms)" : CHUNK_INTERVAL_MS === 2000 ? "高准确率(2000ms)" : "均衡(1000ms)") + "模式");
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 500 ? "低延迟(500ms)" : CHUNK_INTERVAL_MS === 3000 ? "高准确率(3000ms)" : "均衡(1000ms)") + "模式");
     });
     async function runDemoMode() {
       if (demoRunning) return;
