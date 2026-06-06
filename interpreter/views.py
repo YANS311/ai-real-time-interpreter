@@ -113,7 +113,7 @@ def _sync_session_chunk_duration(session, request) -> None:
     if mode == "high":
         session.chunk_duration_sec = 3.0
     elif mode == "low":
-        session.chunk_duration_sec = 0.5
+        session.chunk_duration_sec = 0.2
 
 
 def _upload_too_large_response() -> JsonResponse:

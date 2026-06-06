@@ -15,8 +15,8 @@ _CLAUSE_END = re.compile(r"[,，、]\s*$")
 _NEWLINE = re.compile(r"\n\s*$")
 
 # 强制断句阈值
-MAX_BUFFER_CHARS = 150
-MAX_BUFFER_SEC = 3.0
+MAX_BUFFER_CHARS = 120
+MAX_BUFFER_SEC = 2.5
 
 
 def is_sentence_complete(text: str) -> bool:
@@ -34,9 +34,9 @@ def is_sentence_complete(text: str) -> bool:
 
 
 def is_clause_complete(text: str) -> bool:
-    """逗号边界：仅当文本较长（>=20字符）且以逗号结尾时才触发。"""
+    """逗号边界：仅当文本较长（>=10字符）且以逗号结尾时才触发。"""
     text = text.strip()
-    if len(text) < 20:
+    if len(text) < 10:
         return False
     if _CLAUSE_END.search(text):
         return True
