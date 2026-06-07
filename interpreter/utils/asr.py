@@ -72,6 +72,44 @@ def warm_up_whisper() -> bool:
         return False
 
 
+# Whisper 常见幻觉输出（静音/噪音段自动生成的无意义文本）
+_HALLUCINATION_PATTERNS = [
+    "thanks for watching",
+    "thank you for watching",
+    "thanks for watching!",
+    "thank you for watching!",
+    "subscribe",
+    "please subscribe",
+    "like and subscribe",
+    "like and share",
+    "see you next time",
+    "see you in the next video",
+    "bye bye",
+    "bye-bye",
+    "goodbye",
+    "so",
+    "uh",
+    "um",
+    "you know",
+    "thank you",
+    "thanks",
+]
+
+
+def _is_whisper_hallucination(text: str) -> bool:
+    """检测文本是否为 Whisper 常见幻觉输出。"""
+    t = text.strip().lower()
+    if not t:
+        return False
+    # 完全匹配
+    if t in _HALLUCINATION_PATTERNS:
+        return True
+    # 短文本（<5字符）且全是填充词
+    if len(t) < 5 and t in ("so", "uh", "um", "ah", "oh"):
+        return True
+    return False
+
+
 def transcribe_pcm(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
@@ -118,20 +156,27 @@ def transcribe_pcm(
     seg_list = []
     for seg in segments_iter:
         t = seg.text.strip()
-        # 过滤低置信度段：no_speech_prob > 0.7 或 avg_logprob < -2.0 的段大概率是幻觉
+        if not t:
+            continue
+        # 过滤低置信度段
         no_speech = getattr(seg, "no_speech_prob", 0) or 0
         avg_log = getattr(seg, "avg_logprob", 0) or 0
-        if t and no_speech < 0.7 and avg_log > -2.0:
-            parts.append(t)
-            seg_list.append(
-                {
-                    "start": seg.start,
-                    "end": seg.end,
-                    "text": t,
-                    "avg_logprob": avg_log,
-                    "no_speech_prob": no_speech,
-                }
-            )
+        if no_speech >= 0.7 or avg_log <= -2.0:
+            continue
+        # 过滤 Whisper 常见幻觉输出
+        if _is_whisper_hallucination(t):
+            logger.debug("Filtered Whisper hallucination: %s", t)
+            continue
+        parts.append(t)
+        seg_list.append(
+            {
+                "start": seg.start,
+                "end": seg.end,
+                "text": t,
+                "avg_logprob": avg_log,
+                "no_speech_prob": no_speech,
+            }
+        )
 
     text = " ".join(parts).strip()
     duration_sec = len(pcm_bytes) / (sample_rate * 2)
