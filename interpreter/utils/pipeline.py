@@ -26,17 +26,30 @@ _executor: ThreadPoolExecutor | None = None
 
 def _get_executor() -> ThreadPoolExecutor:
     global _executor
-    if _executor is None or _executor._shutdown:
+    try:
+        if _executor is None or _executor._shutdown:
+            _executor = ThreadPoolExecutor(max_workers=4)
+    except AttributeError:
         _executor = ThreadPoolExecutor(max_workers=4)
     return _executor
 
 
-def _run_asr(segment: bytes, sample_rate: int, language: Optional[str]) -> dict:
+def _submit_work(fn):
+    """提交任务到线程池，shutdown 后自动重建 executor 重试。"""
+    global _executor
+    try:
+        return _get_executor().submit(fn)
+    except Exception:
+        _executor = ThreadPoolExecutor(max_workers=4)
+        return _executor.submit(fn)
+
+
+def _run_asr(segment: bytes, sample_rate: int, language: Optional[str], initial_prompt: Optional[str] = None) -> dict:
     breaker = get_asr_breaker()
     if breaker.is_open():
         return {"text": "", "language": "", "is_partial": True, "circuit_open": True}
     try:
-        result = transcribe_stream_chunk(segment, sample_rate, language=language)
+        result = transcribe_stream_chunk(segment, sample_rate, language=language, initial_prompt=initial_prompt)
         if result.get("error"):
             breaker.record_failure()
         else:
@@ -116,6 +129,8 @@ def process_audio_segment(
 
     def _work() -> dict[str, Any]:
         nonlocal segment_duration_sec
+        # 不使用 initial_prompt — Whisper 在流式场景下传入历史文本会导致
+        # 把历史内容当成当前语音识别出来（幻觉），尤其是中英混合时
         asr = _run_asr(segment, sample_rate, None if source_lang == "auto" else source_lang)
         source_text = (asr.get("text") or "").strip()
 
@@ -219,5 +234,5 @@ def process_audio_segment(
     if blocking:
         return _work()
 
-    future = _get_executor().submit(_work)
+    future = _submit_work(_work)
     return future.result(timeout=settings.PIPELINE_TIMEOUT_SEC)

@@ -1,68 +1,127 @@
 """
-大模型翻译 + 基于上下文的识别/翻译自动纠错。
+翻译模块：Hy-MT2 本地 GPU 翻译（带上下文），Google Translate 降级。
 """
 from __future__ import annotations
 
-import json
 import logging
-import re
+import threading
 from typing import Any
 
 from django.conf import settings
 
-from .glossary import format_glossary_prompt, merge_glossary, load_default_glossary
-from .llm_client import call_llm
-from .ppt_context import format_ppt_prompt
-
 logger = logging.getLogger(__name__)
 
-LANG_LABELS = {
-    "auto": "自动检测",
-    "en": "英语",
-    "ja": "日语",
-    "ko": "韩语",
-    "fr": "法语",
-}
-
-SYSTEM_PROMPT = """你是同声传译。翻译当前英文为中文，简洁口语化。如有明显历史识别错误，用 corrections 修正。
-
-JSON格式：
-{"translation":"译文","corrections":[{"index":行号,"source":"修正原文","target":"修正译文"}]}"""
+# Hy-MT2 模型（懒加载，线程安全）
+_model = None
+_tokenizer = None
+_model_lock = threading.Lock()
 
 
-def _call_llm(messages: list[dict]) -> str:
-    """调用 OpenAI 兼容 API。"""
-    return call_llm(messages, temperature=0.1, json_mode=True, max_tokens=256)
+def _get_hy_mt2():
+    global _model, _tokenizer
+    if _model is not None:
+        return _model, _tokenizer
+    with _model_lock:
+        if _model is not None:
+            return _model, _tokenizer
+        try:
+            import os
+            os.environ.setdefault("HF_ENDPOINT", "https://huggingface.co")
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            import torch
+
+            model_id = "tencent/Hy-MT2-1.8B"
+            logger.info("Loading Hy-MT2-1.8B translation model...")
+            _tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+            _model = AutoModelForCausalLM.from_pretrained(
+                model_id,
+                dtype=torch.float16,
+                device_map="auto",
+                trust_remote_code=True,
+            )
+            logger.info("Hy-MT2-1.8B loaded on %s", _model.device)
+            return _model, _tokenizer
+        except Exception as e:
+            logger.exception("Failed to load Hy-MT2: %s", e)
+            _model = None
+            _tokenizer = None
+            return None, None
 
 
-def _parse_llm_json(raw: str) -> dict:
-    """解析 LLM 返回的 JSON。"""
-    raw = raw.strip()
-    m = re.search(r"\{[\s\S]*\}", raw)
-    if m:
-        raw = m.group(0)
-    return json.loads(raw)
+def _hy_mt2_translate(text: str, history: list[dict] | None = None) -> str:
+    """Hy-MT2 本地 GPU 翻译，带历史上下文。"""
+    model, tokenizer = _get_hy_mt2()
+    if model is None:
+        return ""
 
+    import torch
 
-def _build_history_context(history: list[dict], window: int = 10) -> tuple[str, int]:
-    """构建带全局 index 的历史上下文，返回 (文本, 起始偏移)。"""
-    if not history:
-        return "（无）", 0
-    offset = max(0, len(history) - window)
-    lines = []
-    for i, h in enumerate(history[offset:]):
-        idx = offset + i
-        lines.append(
-            f"[{idx}] 原文: {h.get('source', '')} | 中文: {h.get('target', '')}"
+    # 构建带上下文的消息
+    system_msg = "你是同声传译员。将英文翻译为简洁口语化的中文，保持上下文连贯。"
+    messages = [{"role": "system", "content": system_msg}]
+    if history:
+        for h in history[-5:]:
+            if h.get("source") and h.get("target"):
+                messages.append({"role": "user", "content": h["source"]})
+                messages.append({"role": "assistant", "content": h["target"]})
+    messages.append({"role": "user", "content": text})
+
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    inputs = tokenizer(prompt, return_tensors="pt", add_special_tokens=False).to(model.device)
+
+    try:
+        with torch.no_grad():
+            outputs = model.generate(
+                input_ids=inputs["input_ids"],
+                max_new_tokens=100,
+                do_sample=False,
+            )
+        resp = tokenizer.decode(
+            outputs[0][inputs["input_ids"].shape[1]:],
+            skip_special_tokens=True,
         )
-    return "\n".join(lines), offset
+        return resp.strip()
+    except Exception as e:
+        logger.warning("Hy-MT2 translate failed: %s", e)
+        return ""
+
+
+# Google Translate 降级
+_gt_lock = threading.Lock()
+_gt_instance = None
+
+
+def _get_gt():
+    global _gt_instance
+    if _gt_instance is not None:
+        return _gt_instance
+    with _gt_lock:
+        if _gt_instance is not None:
+            return _gt_instance
+        try:
+            from deep_translator import GoogleTranslator
+            _gt_instance = GoogleTranslator(source="en", target="zh-CN")
+            return _gt_instance
+        except ImportError:
+            return None
+
+
+def _gt_translate(text: str) -> str:
+    gt = _get_gt()
+    if gt is None:
+        return ""
+    try:
+        return gt.translate(text) or ""
+    except Exception as e:
+        logger.warning("Google Translate failed: %s", e)
+        return ""
 
 
 def apply_corrections_to_history(
     history: list[dict],
     corrections: list[dict],
 ) -> list[dict]:
-    """将 LLM 返回的纠错写回会话历史。"""
+    """将纠错写回会话历史。"""
     applied = []
     for c in corrections or []:
         idx = c.get("index")
@@ -84,66 +143,27 @@ def translate_with_correction(
     glossary: dict[str, str] | None = None,
     ppt_context: str = "",
 ) -> dict[str, Any]:
-    """
-    翻译当前片段，并可能对历史字幕纠错。
-
-    history 每项: {"source": "...", "target": "..."}
-    """
+    """翻译：Hy-MT2 优先（带上下文），Google 降级。"""
     source_text = (source_text or "").strip()
     if not source_text:
         return {"translation": "", "corrections": [], "fallback": False}
 
-    if not settings.LLM_API_KEY:
+    # Hy-MT2 本地翻译（带上下文）
+    translation = _hy_mt2_translate(source_text, history)
+
+    # 降级到 Google Translate
+    if not translation:
+        translation = _gt_translate(source_text)
+
+    if translation:
         return {
-            "translation": _fallback_translate(source_text),
+            "translation": translation,
             "corrections": [],
-            "fallback": True,
-        }
-
-    history_text, _ = _build_history_context(history)
-    lang_hint = LANG_LABELS.get(source_lang, source_lang)
-
-    terms = merge_glossary(load_default_glossary(), glossary or {})
-    glossary_block = format_glossary_prompt(terms)
-    glossary_section = f"\n\n{glossary_block}" if glossary_block else ""
-    ppt_block = format_ppt_prompt(ppt_context)
-    ppt_section = f"\n\n{ppt_block}" if ppt_block else ""
-
-    user_content = f"""{lang_hint} | 历史：
-{history_text}
-
-原文：{source_text}
-{glossary_section}{ppt_section}"""
-
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": user_content},
-    ]
-
-    try:
-        raw = _call_llm(messages)
-        parsed = _parse_llm_json(raw)
-        corrections = parsed.get("corrections") or []
-        # 过滤非法 index
-        corrections = [
-            c for c in corrections
-            if isinstance(c.get("index"), int) and 0 <= c["index"] < len(history)
-        ]
-        return {
-            "translation": parsed.get("translation", "").strip(),
-            "corrections": corrections,
             "fallback": False,
         }
-    except Exception as e:
-        logger.exception("LLM translate failed: %s", e)
-        return {
-            "translation": _fallback_translate(source_text),
-            "corrections": [],
-            "fallback": True,
-            "error": str(e),
-        }
 
-
-def _fallback_translate(text: str) -> str:
-    """未配置 API Key 时的占位。"""
-    return f"[待翻译] {text}"
+    return {
+        "translation": f"[待翻译] {source_text}",
+        "corrections": [],
+        "fallback": True,
+    }

@@ -76,6 +76,7 @@ def transcribe_pcm(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
     language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
 ) -> dict:
     """
     对一段 PCM 音频做识别，返回文本与是否偏「最终结果」。
@@ -101,30 +102,34 @@ def transcribe_pcm(
         language=language,
         vad_filter=True,
         vad_parameters=dict(
-            min_silence_duration_ms=300,
-            speech_pad_ms=200,
+            min_silence_duration_ms=500,
+            speech_pad_ms=400,
         ),
-        beam_size=1,
-        best_of=1,
-        condition_on_previous_text=False,
-        no_speech_threshold=0.6,
-        log_prob_threshold=-1.0,
-        compression_ratio_threshold=2.4,
+        beam_size=3,
+        best_of=2,
+        condition_on_previous_text=True,
+        no_speech_threshold=0.8,
+        log_prob_threshold=-1.5,
+        compression_ratio_threshold=2.0,
+        initial_prompt=initial_prompt or None,
     )
 
     parts = []
     seg_list = []
     for seg in segments_iter:
         t = seg.text.strip()
-        if t:
+        # 过滤低置信度段：no_speech_prob > 0.7 或 avg_logprob < -2.0 的段大概率是幻觉
+        no_speech = getattr(seg, "no_speech_prob", 0) or 0
+        avg_log = getattr(seg, "avg_logprob", 0) or 0
+        if t and no_speech < 0.7 and avg_log > -2.0:
             parts.append(t)
             seg_list.append(
                 {
                     "start": seg.start,
                     "end": seg.end,
                     "text": t,
-                    "avg_logprob": getattr(seg, "avg_logprob", None),
-                    "no_speech_prob": getattr(seg, "no_speech_prob", None),
+                    "avg_logprob": avg_log,
+                    "no_speech_prob": no_speech,
                 }
             )
 
@@ -145,13 +150,14 @@ def transcribe_stream_chunk(
     pcm_bytes: bytes,
     sample_rate: int = 16000,
     language: Optional[str] = None,
+    initial_prompt: Optional[str] = None,
 ) -> dict:
     """
     流式分片入口：对当前缓冲片段识别。
     空音频返回空结果，不抛错。
     """
     try:
-        return transcribe_pcm(pcm_bytes, sample_rate, language=language)
+        return transcribe_pcm(pcm_bytes, sample_rate, language=language, initial_prompt=initial_prompt)
     except Exception as e:
         logger.exception("ASR failed: %s", e)
         return {

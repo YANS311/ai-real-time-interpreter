@@ -323,7 +323,7 @@
       <span class="metric-pill">质量 <strong id="qualityScore">--</strong></span>
       <span class="metric-pill">信噪比 <strong id="snrDb">--</strong> dB</span>
       <span class="metric-pill">均延迟 <strong id="avgLatency">--</strong> ms</span>
-      <span class="metric-pill">分片 <strong id="chunkMs">300</strong> ms</span>
+      <span class="metric-pill">分片 <strong id="chunkMs">1000</strong> ms</span>
       <span class="metric-pill" id="bgmPill">BGM <strong id="bgmStatus">--</strong></span>
       <span class="metric-pill" id="wsPill">WS <strong id="wsStatus">--</strong></span>
     </div>
@@ -397,6 +397,7 @@
       <label><input type="checkbox" id="chkTts" /> 中文语音播报</label>
       <label><input type="checkbox" id="chkPartial" checked /> 显示临时字幕</label>
       <label><input type="checkbox" id="chkBgm" /> BGM 人声分离（视频/文件，麦克风勿开）</label>
+      <label><input type="checkbox" id="chkPlaySource" checked /> 播放源音频</label>
       <label><input type="checkbox" id="chkDenoise" checked /> 环境降噪（风声/杂音）</label>
       <label><input type="checkbox" id="chkBilingual" checked /> 双语字幕（中文在上·原文在下）</label>
       <label><input type="checkbox" id="chkSpeaker" checked /> 说话人标注（A/B 轻量分段）</label>
@@ -404,8 +405,9 @@
       <label>
         模式
         <select id="modeSelect" class="lang-select">
-          <option value="low">低延迟（直播/麦克风 300ms）</option>
-          <option value="high">高准确率（视频文件 800ms）</option>
+          <option value="low">低延迟（直播/麦克风 200ms）</option>
+          <option value="mid" selected>均衡（麦克风 1000ms）</option>
+          <option value="high">高准确率（视频/音频文件 3000ms）</option>
         </select>
       </label>
     </div>
@@ -498,7 +500,7 @@
     const LS_GLOSSARY_KEY = "interpreter_glossary";
     const LS_PPT_CONTEXT_KEY = "interpreter_ppt_context";
     const LS_STYLE_KEY = "interpreter_sub_style";
-    let CHUNK_INTERVAL_MS = 300;
+    let CHUNK_INTERVAL_MS = 1000;
     let qualitySamples = [];
     let saveHistoryTimer = null;
     let demoRunning = false;
@@ -547,6 +549,7 @@
       btnExportSrt: document.getElementById("btnExportSrt"),
       btnExportVtt: document.getElementById("btnExportVtt"),
       chkBgm: document.getElementById("chkBgm"),
+      chkPlaySource: document.getElementById("chkPlaySource"),
       chkDenoise: document.getElementById("chkDenoise"),
       chkBilingual: document.getElementById("chkBilingual"),
       modeSelect: document.getElementById("modeSelect"),
@@ -1303,10 +1306,9 @@
         setStatus("无法访问麦克风: " + e.message, "error");
         return;
       }
-      // 使用 Web Audio API 直接采集 raw PCM，避免 webm 分片解码失败
+      // 使用 Web Audio API 直接采集 raw PCM，通过 WebSocket 发送（避免 HTTP 开销）
       micAudioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
       const source = micAudioCtx.createMediaStreamSource(micStream);
-      // buffer size 4096 ≈ 256ms @16kHz，每 300ms 发一包
       micProcessor = micAudioCtx.createScriptProcessor(4096, 1, 1);
       micPcmBuffer = [];
       const samplesPerChunk = Math.round(16000 * CHUNK_INTERVAL_MS / 1000);
@@ -1317,48 +1319,49 @@
         if (micPcmBuffer.length >= samplesPerChunk) {
           const samples = micPcmBuffer.splice(0, samplesPerChunk);
           const buf = new Float32Array(samples);
-          const blob = new Blob([buf], { type: "application/octet-stream" });
-          const fd = new FormData();
-          fd.append("audio", blob, "chunk.pcm");
-          fd.append("format", "pcm_float");
-          fd.append("sample_rate", "16000");
-          fd.append("session_id", sessionId);
-          fd.append("source_lang", el.sourceLang.value);
-          fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
-          fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
-          fd.append("separation_method", "auto");
-          appendPipelineOptions(fd);
-          fetch("/api/audio/chunk/", { method: "POST", body: fd })
-            .then(r => r.json())
-            .then(data => handleResponse(data))
-            .catch(err => setStatus("传输失败: " + err.message, "error"));
+          // 转 base64 通过 WebSocket 发送
+          const bytes = new Uint8Array(buf.buffer);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+          const b64 = btoa(binary);
+          if (wsSocket && wsSocket.readyState === WebSocket.OPEN) {
+            wsSocket.send(JSON.stringify({
+              action: "audio_chunk",
+              format: "pcm_float",
+              data: b64,
+              sample_rate: 16000,
+              source_lang: el.sourceLang.value,
+              chunk_duration_sec: CHUNK_INTERVAL_MS / 1000,
+              compress_speech: el.chkCompress?.checked ? "1" : "0",
+              speaker_labels: el.chkSpeaker?.checked ? "1" : "0",
+            }));
+          }
         }
       };
       source.connect(micProcessor);
       micProcessor.connect(micAudioCtx.destination);
       el.btnMic.disabled = true;
       el.btnStop.disabled = false;
-      setStatus("麦克风同传中 · PCM " + CHUNK_INTERVAL_MS + "ms 分片", "live");
+      setStatus("麦克风同传中 · WS PCM " + CHUNK_INTERVAL_MS + "ms", "live");
     }
 
     async function stopMic() {
-      // 发送剩余 PCM 缓冲
-      if (micPcmBuffer.length > 0) {
+      // 发送剩余 PCM 缓冲 + flush
+      if (micPcmBuffer.length > 0 && wsSocket && wsSocket.readyState === WebSocket.OPEN) {
         const samples = micPcmBuffer.splice(0);
         const buf = new Float32Array(samples);
-        const blob = new Blob([buf], { type: "application/octet-stream" });
-        const fd = new FormData();
-        fd.append("audio", blob, "chunk.pcm");
-        fd.append("format", "pcm_float");
-        fd.append("sample_rate", "16000");
-        fd.append("session_id", sessionId);
-        fd.append("source_lang", el.sourceLang.value);
-        fd.append("separate_bgm", el.chkBgm.checked ? "1" : "0");
-        fd.append("denoise", el.chkDenoise.checked ? "1" : "0");
-        fd.append("separation_method", "auto");
-        fd.append("flush", "1");
-        appendPipelineOptions(fd);
-        try { await handleResponse(await (await fetch("/api/audio/chunk/", { method: "POST", body: fd })).json()); } catch (_) {}
+        const bytes = new Uint8Array(buf.buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        wsSocket.send(JSON.stringify({
+          action: "audio_flush",
+          format: "pcm_float",
+          data: btoa(binary),
+          sample_rate: 16000,
+          source_lang: el.sourceLang.value,
+        }));
+      } else if (wsSocket && wsSocket.readyState === WebSocket.OPEN) {
+        wsSocket.send(JSON.stringify({ action: "audio_flush" }));
       }
       // 清理 Web Audio API
       if (micProcessor) { micProcessor.disconnect(); micProcessor = null; }
@@ -1380,6 +1383,11 @@
       try {
         setStatus("上传并提取音轨: " + file.name, "live");
         await ingestMediaFile(file);
+        // 同步播放源音频
+        if (el.chkPlaySource?.checked && el.videoPreview.src) {
+          el.videoPreview.currentTime = 0;
+          el.videoPreview.play().catch(() => {});
+        }
         setStatus("流式同传识别中…", "live");
         await streamProcessedFile();
         setStatus("视频同传完成" + (el.chkBgm.checked ? "（BGM已分离）" : ""));
@@ -1440,12 +1448,17 @@
     el.btnVideoPause.addEventListener("click", async () => {
       videoStreamPaused = !videoStreamPaused;
       el.btnVideoPause.textContent = videoStreamPaused ? "继续" : "暂停";
+      if (el.chkPlaySource?.checked) {
+        videoStreamPaused ? el.videoPreview.pause() : el.videoPreview.play().catch(() => {});
+      }
       await sessionControl(videoStreamPaused ? "pause" : "resume");
       setStatus(videoStreamPaused ? "视频同传已暂停" : "视频同传继续中", videoStreamPaused ? "warn" : "live");
     });
     el.btnVideoStop.addEventListener("click", async () => {
       videoStreamAborted = true;
       videoStreamPaused = false;
+      el.videoPreview.pause();
+      el.videoPreview.currentTime = 0;
       await sessionControl("stop");
       el.btnVideoStart.disabled = !selectedVideoFile;
       el.btnVideoStop.disabled = true;
@@ -1498,9 +1511,10 @@
     });
     loadSubtitleStyle();
     el.modeSelect.addEventListener("change", () => {
-      CHUNK_INTERVAL_MS = el.modeSelect.value === "high" ? 800 : 300;
+      const v = el.modeSelect.value;
+      CHUNK_INTERVAL_MS = v === "low" ? 200 : v === "high" ? 3000 : 1000;
       el.chunkMs.textContent = String(CHUNK_INTERVAL_MS);
-      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 300 ? "低延迟(300ms)" : "高准确率(800ms)") + "模式");
+      setStatus("已切换为" + (CHUNK_INTERVAL_MS === 200 ? "低延迟(200ms)" : CHUNK_INTERVAL_MS === 3000 ? "高准确率(3000ms)" : "均衡(1000ms)") + "模式");
     });
     async function runDemoMode() {
       if (demoRunning) return;
