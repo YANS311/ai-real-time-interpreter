@@ -672,7 +672,7 @@
       fd.append("compress_speech", el.chkCompress?.checked ? "1" : "0");
       fd.append("speaker_labels", el.chkSpeaker?.checked ? "1" : "0");
       fd.append("chunk_duration", String(CHUNK_INTERVAL_MS / 1000));
-      fd.append("accuracy_mode", el.modeSelect?.value === "high" ? "high" : "low");
+      fd.append("accuracy_mode", el.modeSelect?.value || "mid");
     }
 
     function setWsStatus(state) {
