@@ -740,11 +740,9 @@ def api_history_detail(request, record_id: str):
 
 
 @csrf_exempt
-@require_http_methods(["POST", "DELETE"])
+@require_http_methods(["DELETE"])
 def api_history_record(request, record_id: str):
     """删除历史记录。"""
-    if request.method != "DELETE":
-        return JsonResponse({"error": "use DELETE"}, status=405)
     if delete_record(record_id):
         return JsonResponse({"ok": True})
     return JsonResponse({"error": "not found"}, status=404)
