@@ -51,7 +51,7 @@ def should_flush(text: str, buffer_sec: float) -> bool:
     # 完整句子（句号/问号/感叹号）→ 立即翻译
     if is_sentence_complete(text):
         return True
-    # 长逗号子句（>=20字）→ 翻译
+    # 长逗号子句（>=15字）→ 翻译
     if is_clause_complete(text):
         return True
     # 缓冲超长 → 强制翻译

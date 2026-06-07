@@ -178,15 +178,13 @@ def _process_audio_chunk_sync(session_id: str, data: dict) -> dict | None:
     session.touch()
 
     # 更新会话配置
-    if data.get("source_lang"):
-        pass  # source_lang 从 data 获取
     if "glossary" in data:
         from .utils.glossary import merge_glossary
         session.glossary = merge_glossary(session.glossary, data["glossary"])
     session.speaker_tracker.enabled = data.get("speaker_labels", True) != "0"
     source_lang = data.get("source_lang") or "auto"
     flush = data.get("flush", False)
-    compress_speech_enabled = data.get("compress_speech", True)
+    compress_speech_enabled = data.get("compress_speech", "1") == "1"
 
     # 支持前端传入分片时长（秒），灵活调整 ASR 分片
     chunk_dur = data.get("chunk_duration_sec")
